@@ -20,7 +20,7 @@ With the SoTA points obtained through ParetoQ, we are able to improve the scalin
 </div>
 
 ## News
-- May 28, 2024: 🚀 We made our 1-bit, 1.58-bit, 2-bit, 3-bit and 4-bit quantized MobileLLM models publicly available. [MobileLLM-ParetoQ]() We also release the MobileLLM-ParetoQ-BF16 models with the same structrue but trained on a more advanced data and achieves higher scores. The quantized MobileLLM models are all fine-tuned on top of MobileLLM-ParetoQ-BF16.
+- May 28, 2024: 🚀 We made our 1-bit, 1.58-bit, 2-bit, 3-bit and 4-bit quantized MobileLLM models publicly available. [MobileLLM-ParetoQ](https://huggingface.co/collections/facebook/mobilellm-6722be18cb86c20ebe113e95) We also release the MobileLLM-ParetoQ-BF16 models with the same structrue but trained on a more advanced data and achieves higher scores. The quantized MobileLLM models are all fine-tuned on top of MobileLLM-ParetoQ-BF16.
 
 
 ## Citation
