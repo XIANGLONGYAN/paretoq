@@ -3,7 +3,6 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-torchrun --nnodes=1 --nproc_per_node=1 train.py \
 CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --nproc_per_node=1 train.py \
 --local_dir "/tmp/llama/" \
 --input_model_filename "/tmp/llama_1B/llama_1B_bit1" \

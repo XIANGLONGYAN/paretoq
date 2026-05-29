@@ -10,7 +10,16 @@ from typing import Dict
 
 import torch
 import transformers
+import random
+import numpy as np
 
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 # Define a utility method for setting the logging parameters of a logger
 def get_logger(logger_name):

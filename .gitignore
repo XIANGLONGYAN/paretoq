@@ -1,0 +1,14 @@
+cat > .gitignore << 'EOF'
+# wandb 训练日志
+wandb/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 临时文件
+*.swp
+*.swo
+.DS_Store
+EOF

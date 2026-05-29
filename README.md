@@ -1,121 +1,407 @@
-# ParetoQ
+# ParetoQ - 低比特量化感知训练 (QAT) 框架
 
+ParetoQ 是一个基于 HuggingFace Transformers 的低比特量化感知训练框架，支持 **1/2/3/4 bit** 权重量化，适用于 LLaMA、Qwen2、Mistral 等主流大语言模型。
 
-This repository contains the training code of ParetoQ introduced in our work: "[ParetoQ: Scaling Laws in Extremely Low-bit LLM Quantization](https://arxiv.org/abs/2502.02631)"
+核心特性：
+- 支持 1-bit（Binary）、2-bit（Ternary）、3-bit、4-bit 权重量化
+- 基于 Learned Step-size Quantization (LSQ) 的可学习量化步长
+- 支持 Stretched Elastic Quantization（2-bit 场景优化）
+- 兼容 HuggingFace `Trainer` API，支持 DeepSpeed、FSDP 等分布式训练
+- 内置 PPL（Perplexity）评估和 lm_eval zero-shot 评估
 
-In this work, we present ParetoQ, the first unified framework that facilitates rigorous comparisons across 1-bit, 1.58-bit, 2-bit, 3-bit, and 4-bit quantization settings. By optimizing training schemes and refining quantization functions, ParetoQ surpasses all previous methods tailored to specific bit widths.  Specifically, the 1.58-bit ParetoQ LLaMA-3 8B model reduces the performance gap to full precision by relatively 37.8% compared to the 1-bit Era’s 1.58-bit LLaMA-3 8B model, while using only 30% of the training tokens.
+---
 
-<div align=center>
-<img width=50% src="./main_result_ternary.jpg"/>
-</div>
+## 目录
 
-<div align=center>
-<img width=100% src="./main_result_234bit.jpg"/>
-</div>
+- [环境配置](#环境配置)
+- [数据准备](#数据准备)
+- [BF16 Baseline 评估](#bf16-baseline-评估)
+- [QAT 训练](#qat-训练)
+- [加载量化模型评估](#加载量化模型评估)
+- [项目结构](#项目结构)
+- [关键参数说明](#关键参数说明)
+- [常见问题 (FAQ)](#常见问题-faq)
 
-With the SoTA points obtained through ParetoQ, we are able to improve the scaling law analysis. Figure (a) (b) demonstrates that sub-4-bit quantization, including binary, ternary, 2-bit, and 3-bit, often outperform 4-bit quantization. Notably, 2-bit and ternary models reside on the Pareto frontier. When considering hardware-friendliness and real-time speed, we generally recommend exploring 2-bit quantization for on-device applications.
+---
 
-<div align=center>
-<img width=100% src="./main_result_scaling_law.jpg"/>
-</div>
+## 环境配置
 
-## News
-- May 28, 2024: 🚀 We made our 1-bit, 1.58-bit, 2-bit, 3-bit and 4-bit quantized MobileLLM models publicly available. [MobileLLM-ParetoQ](https://huggingface.co/collections/facebook/mobilellm-6722be18cb86c20ebe113e95) We also release the MobileLLM-ParetoQ-BF16 models with the same structrue but trained on a more advanced data and achieves higher scores. The quantized MobileLLM models are all fine-tuned on top of MobileLLM-ParetoQ-BF16.
+### 1. 创建 Conda 环境
 
+```bash
+conda create -n paretoq python=3.11 -y
+conda activate paretoq
+```
 
-## Citation
+### 2. 安装 PyTorch
 
-If you find our code useful for your research, please consider citing:
-    
-    @article{liu2025paretoq,
-      title={ParetoQ: Scaling Laws in Extremely Low-bit LLM Quantization},
-      author={Liu, Zechun and Zhao, Changsheng and Huang, Hanxian and Chen, Sijia and Zhang, Jing and Zhao, Jiawei and Roy, Scott and Jin, Lisa and Xiong, Yunyang and Shi, Yangyang and others},
-      journal={arXiv preprint arXiv:2502.02631},
-      year={2025}
-    }
-    
-## Run
+> 💡 **建议使用 CUDA 12.4**，但请根据自己的 GPU 型号和驱动版本适配安装对应的 PyTorch 版本。可参考 [PyTorch 官方安装页面](https://pytorch.org/get-started/locally/) 选择合适的版本。
 
-### 1. Requirements:
-* python 3.11
-* pip3 install torch
-* pip install -r requirement.txt
-   
-### 2. Steps to run:
-* Specify the data path and the pre-trained full-precision model path in run_train.sh file
-* Run `bash 1_run_train.sh $w_bit` E.g. `bash 1_run_train.sh 2` for 2-bit weight quantization.
+```bash
+# 示例：CUDA 12.4
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
 
-## Comparison to SoTA Ternary LLM methods
-The results reported in the paper is run with the internal LLaMA codebase in Meta. We reproduced our experiments with huggingface codebase and released code here. The results are close to those in the paper. 
+### 3. 安装依赖
 
- | Method | #Params | Arc-e | Arc-c | Boolq | Piqa | Siqa | HellaSwag | Obqa | WinoGrande | Avg. | Wiki |
- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
- | RTN | 600M | 26.2 | 24.6 | 62.2 | 49.5 | 36.3 | 26.1 | 27.1 | 48.8 | 37.6 | 6.60E+05 | 
- | LLM-QAT | 600M | 34.0 | 23.0 | 59.4 | 53.6 | 38.9 | 28.7 | 32.3 | 51.4 | 40.2 | 71.7 | 
- | 1-bit era | 700M | 49.5 | 29.0 | 59.2 | 67.5 | 43.6 | 43.2 | 38.9 | 53.5 | 48.1 | 17.3 | 
- | **ParetoQ** | **600M** | **65.5** | **43.8** | **62.3** | **70.6** | **44.7** | **51.3** | **47.1** | **58.8** | **55.5** | **11.4** |
- | RTN | 1B | 25.7 | 24.8 | 37.8 | 49.3 | 37.1 | 26.2 | 25.2 | 50.2 | 34.5 | 1.40E+05 | 
- | LLM-QAT | 1B | 36.0 | 26.2 | 47.7 | 55.1 | 39.7 | 31.3 | 33.5 | 49.6 | 39.9 | 56.9 | 
- | 1-bit era | 1.3B | 52.4 | 34.1 | 61.9 | 69.1 | 44.7 | 47.4 | 41.1 | 55.3 | 50.8 | 23.6 | 
- | **ParetoQ** | **1B** | **68.5** | **47.6** | **62.8** | **72.1** | **45.3** | **57.4** | **52.9** | **61.3** | **58.5** | **10.0** | 
- | RTN | 3B | 26.9 | 23.6 | 62.2 | 51.3 | 37.6 | 26.4 | 27.0 | 49.3 | 38.0 | 4.40E+05 | 
- | LLM-QAT | 3B | 44.5 | 30.7 | 62.1 | 62.7 | 41.0 | 43.4 | 35.0 | 50.6 | 46.3 | 6.50E+02 | 
- | 1-bit era | 3B | 58.7 | 37.2 | 61.3 | 71.3 | 45.2 | 56.0 | 45.8 | 60.3 | 54.5 | 265.6 | 
- | **ParetoQ**  | **3B** | **71.5** | **48.6** | **68.2** | **75.5** | **46.4** | **67.9** | **54.3** | **63.1** | **61.9** | **9.9** |
+所有依赖已统一写在 `requirement.txt` 中（包括 lm_eval、wandb 等），一条命令安装：
 
- More results for other bit widths can be found in the [paper](https://arxiv.org/abs/2502.02631).
+```bash
+pip install -r requirement.txt
+```
 
-## Model Release
+### 4. 登录 wandb（用于训练日志可视化）
 
- | [Method | Arc-e | Arc-c | Boolq | Piqa | Siqa | HellaSwag | Obqa | WinoGrande | Avg. | Wiki |
- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
- | MobileLLM-ParetoQ-125M |
- | [MobileLLM-ParetoQ-125M-BF16](https://huggingface.co/facebook/MobileLLM-ParetoQ-125M-BF16) | 56 | 34.5 | 56.3 | 65.5 | 42 | 40.1 | 42.2 | 51.3 | 48.5 | 15.1 | 
- | [MobileLLM-ParetoQ-125M-1-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-125M-1-bit) | 43.9 | 29.1 | 61.2 | 59.2 | 39.8 | 29.8 | 33.7 | 52.7 | 43.7 | 25.8 | 
- | [MobileLLM-ParetoQ-125M-1.58-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-125M-1.58-bit) | 49.3 | 30.9 | 61 | 62.1 | 41 | 34.3 | 40.4 | 52.9 | 46.5 | 20 | 
- | [MobileLLM-ParetoQ-125M-2-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-125M-2-bit) | 50.7 | 32.7 | 59.8 | 63.3 | 41 | 36.3 | 40.6 | 52.7 | 47.1 | 18.2 | 
- | [MobileLLM-ParetoQ-125M-3-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-125M-3-bit) | 53.5 | 33.7 | 56.1 | 65.6 | 41.7 | 40 | 41.2 | 51.3 | 47.9 | 15 | 
- | [MobileLLM-ParetoQ-125M-4-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-125M-4-bit) | 55.4 | 35.2 | 54.1 | 66.2 | 41.7 | 40.8 | 44 | 52.1 | 48.7 | 14.1 | 
- | MobileLLM-ParetoQ-350M |
- | [MobileLLM-ParetoQ-350M-BF16](https://huggingface.co/facebook/MobileLLM-ParetoQ-350M-BF16) | 65.5 | 42.3 | 57.4 | 71 | 43.5 | 53.3 | 47.3 | 58.3 | 54.8 | 10.5 | 
- | [MobileLLM-ParetoQ-350M-1-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-350M-1-bit) | 52.7 | 31.3 | 61.6 | 63.9 | 40.9 | 38.3 | 39.5 | 52.9 | 47.6 | 17 | 
- | [MobileLLM-ParetoQ-350M-1.58-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-350M-1.58-bit) | 56.8 | 36.3 | 62.2 | 67.1 | 43.5 | 44 | 46.3 | 55.2 | 51.4 | 14.5 | 
- | [MobileLLM-ParetoQ-350M-2-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-350M-2-bit) | 59 | 39.4 | 63.5 | 68.8 | 43.1 | 47.3 | 44.1 | 57.5 | 52.8 | 12.5 | 
- | [MobileLLM-ParetoQ-350M-3-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-350M-3-bit) | 63.9 | 40.5 | 61.4 | 70.6 | 43.2 | 51.4 | 50 | 56.6 | 54.7 | 10.9 | 
- | [MobileLLM-ParetoQ-350M-4-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-350M-4-bit) | 64.9 | 41.6 | 57.8 | 71.3 | 44.4 | 53.5 | 48.2 | 57.9 | 55 | 10.3 | 
- | MobileLLM-ParetoQ-600M |
- | [MobileLLM-ParetoQ-600M-BF16](https://huggingface.co/facebook/MobileLLM-ParetoQ-600M-BF16) | 68.5 | 47.6 | 60.5 | 72.5 | 44.4 | 59.5 | 51.4 | 61.4 | 58.2 | 9.1 | 
- | [MobileLLM-ParetoQ-600M-1-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-600M-1-bit) | 58.9 | 36 | 60.5 | 65.2 | 43.1 | 44.2 | 40.7 | 53.9 | 50.3 | 14 | 
- | [MobileLLM-ParetoQ-600M-1.58-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-600M-1.58-bit) | 65.5 | 43.8 | 62.3 | 70.6 | 44.7 | 51.3 | 47.1 | 58.8 | 55.5 | 11.5 | 
- | [MobileLLM-ParetoQ-600M-2-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-600M-2-bit) | 67.7 | 43.3 | 63 | 72.1 | 44.8 | 53.9 | 49.8 | 58.4 | 56.6 | 10.5 | 
- | [MobileLLM-ParetoQ-600M-3-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-600M-3-bit) | 68.2 | 47.4 | 64.2 | 73.1 | 44.2 | 58.1 | 50.2 | 62.4 | 58.5 | 9.4 | 
- | [MobileLLM-ParetoQ-600M-4-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-600M-4-bit) | 69.3 | 48.9 | 64.8 | 73.2 | 44.2 | 59.5 | 51.2 | 62.1 | 59.2 | 8.9 | 
- | MobileLLM-ParetoQ-1B |
- | [MobileLLM-ParetoQ-1B-BF16](https://huggingface.co/facebook/MobileLLM-ParetoQ-1B-BF16) | 73.4 | 50.8 | 67.6 | 74.1 | 46.7 | 64.7 | 56.6 | 62.7 | 62.1 | 8 | 
- | [MobileLLM-ParetoQ-1B-1-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1B-1-bit) | 62.6 | 40.2 | 62.1 | 69.5 | 42.8 | 49.5 | 48.8 | 54.9 | 53.8 | 12.8 | 
- | [MobileLLM-ParetoQ-1B-1.58-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1B-1.58-bit) | 68.5 | 47.6 | 62.8 | 72.1 | 45.3 | 57.4 | 52.9 | 61.3 | 58.5 | 10 | 
- | [MobileLLM-ParetoQ-1B-2-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1B-2-bit) | 73.3 | 49.3 | 65.7 | 74.2 | 45.9 | 60.3 | 57.4 | 61.6 | 61 | 9.2 | 
- | [MobileLLM-ParetoQ-1B-3-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1B-3-bit) | 72.3 | 51.4 | 67 | 74.5 | 45.7 | 63.4 | 53.7 | 62.1 | 61.3 | 8.4 | 
- | [MobileLLM-ParetoQ-1B-4-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1B-4-bit) | 74.7 | 52.1 | 67.9 | 74.8 | 46.9 | 64.8 | 56.2 | 62.1 | 62.5 | 7.9 | 
- | MobileLLM-ParetoQ-1.5B |
- | [MobileLLM-ParetoQ-1.5B-BF16](https://huggingface.co/facebook/MobileLLM-ParetoQ-1.5B-BF16) | 73.9 | 51.4 | 70 | 74.8 | 46.6 | 66.4 | 55.1 | 63.2 | 62.7 | 7.9 | 
- | [MobileLLM-ParetoQ-1.5B-1-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1.5B-1-bit) | 67.9 | 42.4 | 63.4 | 70.2 | 44.5 | 54.2 | 47.4 | 57.6 | 55.9 | 11 | 
- | [MobileLLM-ParetoQ-1.5B-1.58-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1.5B-1.58-bit) | 70.2 | 48 | 65.8 | 73.4 | 47.3 | 61.8 | 55.3 | 62.4 | 60.5 | 9 | 
- | [MobileLLM-ParetoQ-1.5B-2-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1.5B-2-bit) | 73.3 | 47.5 | 70.1 | 74.1 | 46.8 | 64.6 | 55.5 | 62.5 | 61.8 | 8.3 | 
- | [MobileLLM-ParetoQ-1.5B-3-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1.5B-3-bit) | 72.6 | 49.9 | 70.6 | 75.7 | 47.7 | 66 | 56.2 | 64.5 | 62.9 | 8 | 
- | [MobileLLM-ParetoQ-1.5B-4-bit](https://huggingface.co/facebook/MobileLLM-ParetoQ-1.5B-4-bit) | 74.4 | 51.7 | 71.8 | 75.3 | 47.3 | 67.2 | 57.6 | 63 | 63.6 | 7.6 | 
+```bash
+wandb login  # 输入你的 API key
+```
 
+### 5. 验证安装
 
-## Acknowledgement
+```bash
+python -c "
+import torch
+print(f'PyTorch: {torch.__version__}')
+print(f'CUDA (compiled): {torch.version.cuda}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+print(f'GPU: {torch.cuda.get_device_name(0)}')
+"
+```
 
-This code is partially based on HuggingFace [Transformers](https://github.com/huggingface/transformers) repo under [Apache License](https://github.com/huggingface/transformers/blob/main/LICENSE).
+预期输出：
+```
+PyTorch: 2.6.0+cu124
+CUDA (compiled): 12.4
+CUDA available: True
+GPU: NVIDIA H20
+```
 
-## Contact
+---
 
-Zechun Liu, Reality Labs, Meta Inc (zechunliu at meta dot com)
+## 数据准备
 
-Changsheng Zhao, Reality Labs, Meta Inc (cszhao at meta dot com)
+使用 `gen_data.py` 从 HuggingFace 下载数据集并转为 jsonl 格式。
+
+### 生成 wikitext-2 训练集和测试集
+
+```bash
+# 将下面的路径修改为你自己的数据存放路径
+DATA_DIR=/path/to/your/dataset/paretoq_data
+
+# 生成训练集
+python gen_data.py \
+    --dataset_name wikitext \
+    --dataset_config wikitext-2-raw-v1 \
+    --output_dir $DATA_DIR \
+    --splits train
+
+# 生成测试集
+python gen_data.py \
+    --dataset_name wikitext \
+    --dataset_config wikitext-2-raw-v1 \
+    --output_dir $DATA_DIR \
+    --splits test
+```
+
+### 生成其他数据集（可选）
+
+```bash
+# wikitext-103（更大的训练集，约 100M tokens）
+python gen_data.py \
+    --dataset_name wikitext \
+    --dataset_config wikitext-103-raw-v1 \
+    --output_dir $DATA_DIR \
+    --splits train test
+
+# C4 数据集（取前 50000 条）
+python gen_data.py \
+    --dataset_name allenai/c4 \
+    --dataset_config en \
+    --output_dir $DATA_DIR \
+    --splits train \
+    --max_samples 50000
+```
+
+### 生成的数据文件
+
+```
+$DATA_DIR/
+├── wikitext_wikitext-2-raw-v1_train.jsonl   # wikitext-2 训练数据
+├── wikitext_wikitext-2-raw-v1_test.jsonl    # wikitext-2 测试数据
+└── ...
+```
+
+每行为一个 JSON 对象，格式为 `{"text": "...文本内容..."}`。
+
+### gen_data.py 参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--dataset_name` | HuggingFace 数据集名 | `wikitext` |
+| `--dataset_config` | 数据集配置/子集 | `wikitext-2-raw-v1` |
+| `--output_dir` | 输出目录 | `/tmp/paretoq_data` |
+| `--splits` | 下载的数据分割（支持多个） | `train test` |
+| `--min_length` | 最短文本字符数（过滤短文本） | `10` |
+| `--max_samples` | 每个 split 最大样本数 | `None`（全部） |
+
+---
+
+## BF16 Baseline 评估
+
+在做量化训练之前，先评估模型在 BF16（全精度）下的性能，作为 baseline 参考。
+
+### 运行 BF16 评估
+
+```bash
+cd /path/to/paretoq
+source scripts/eval_bf16.sh
+```
+
+### eval_bf16.sh 脚本内容
+
+```bash
+# 请将以下路径修改为你自己的实际路径
+MODEL_DIR=/path/to/pretrained/models
+DATA_DIR=/path/to/your/dataset/paretoq_data
+
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29505 train.py \
+--local_dir "/tmp/llama/" \
+--input_model_filename "${MODEL_DIR}/llama-3.2-1B" \
+--output_model_filename "1B-bf16-baseline" \
+--train_data_local_path "${DATA_DIR}/wikitext_wikitext-2-raw-v1_train.jsonl" \
+--eval_data_local_path "${DATA_DIR}/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--do_train False \
+--do_eval False \
+--model_max_length 2048 \
+--fp16 False \
+--bf16 True \
+--log_on_each_node False \
+--num_train_epochs 1 \
+--per_device_train_batch_size 8 \
+--per_device_eval_batch_size 1 \
+--gradient_accumulation_steps 1 \
+--evaluation_strategy "no" \
+--save_strategy "steps" \
+--save_steps 2000 \
+--report_to "none" \
+--save_total_limit 1 \
+--learning_rate 2e-5 \
+--weight_decay 0. \
+--warmup_ratio 0. \
+--lr_scheduler_type "cosine" \
+--logging_steps 1 \
+--tf32 False \
+--gradient_checkpointing False \
+--qat True \
+--w_bits 16 \
+--eval_ppl \
+--eval_lm_eval \
+--tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
+--eval_batch_size 16
+```
+
+**关键参数说明：**
+- `--do_train False`：不训练，只评估
+- `--w_bits 16`：不量化（BF16 全精度）
+- `--eval_ppl`：评估 wikitext2 和 c4 的 Perplexity
+- `--eval_lm_eval`：运行 lm_eval zero-shot 评估
+- `--tasks`：指定 lm_eval 评估任务
+
+### 评估输出示例
+
+```
+wikitext2 perplexity: 9.xx
+c4 perplexity: 11.xx
+============================================================
+Summary:
+  piqa: 75.xx%
+  hellaswag: 55.xx%
+  winogrande: 60.xx%
+  arc_easy: 65.xx%
+  arc_challenge: 35.xx%
+  Average Acc: 58.xx%
+============================================================
+```
+
+---
+
+## QAT 训练
+
+### 运行 QAT 训练
+
+```bash
+cd /path/to/paretoq
+source scripts/train.sh
+```
+
+### train.sh 脚本内容
+
+```bash
+# 请将以下路径修改为你自己的实际路径
+MODEL_DIR=/path/to/pretrained/models
+DATA_DIR=/path/to/your/dataset/paretoq_data
+
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29511 train.py \
+--local_dir "/tmp/llama/" \
+--input_model_filename "${MODEL_DIR}/llama-3.2-1B" \
+--output_model_filename "1B-finetuned-4bit" \
+--train_data_local_path "${DATA_DIR}/wikitext_wikitext-2-raw-v1_train.jsonl" \
+--eval_data_local_path "${DATA_DIR}/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--do_train True \
+--do_eval False \
+--model_max_length 2048 \
+--fp16 False \
+--bf16 True \
+--log_on_each_node False \
+--logging_dir /tmp/output/runs/current \
+--num_train_epochs 1 \
+--per_device_train_batch_size 8 \
+--per_device_eval_batch_size 1 \
+--gradient_accumulation_steps 1 \
+--evaluation_strategy "no" \
+--save_strategy "steps" \
+--save_steps 2000 \
+--report_to "wandb" \
+--save_total_limit 1 \
+--learning_rate 2e-5 \
+--weight_decay 0. \
+--warmup_ratio 0. \
+--lr_scheduler_type "cosine" \
+--logging_steps 1 \
+--tf32 False \
+--gradient_checkpointing False \
+--qat True \
+--dataloader_num_workers 0 \
+--seed 42 \
+--w_bits 4 \
+--eval_ppl \
+--eval_lm_eval \
+--tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
+--eval_batch_size 64
+```
+
+### 关键训练参数
+
+| 参数 | 说明 |
+|------|------|
+| `--w_bits` | 量化位数（1/2/3/4），16 为不量化 |
+| `--qat True` | 启用量化感知训练模式 |
+| `--do_train True` | 开启训练 |
+| `--num_train_epochs 1` | 训练轮数 |
+| `--per_device_train_batch_size 8` | 每 GPU 训练 batch size |
+| `--learning_rate 2e-5` | 学习率 |
+| `--lr_scheduler_type "cosine"` | 学习率调度策略 |
+| `--model_max_length 2048` | 最大序列长度 |
+| `--dataloader_num_workers 0` | DataLoader 线程数（设为 0 保证可复现性） |
+| `--seed 42` | 随机种子（保证可复现性） |
+| `--eval_ppl` | 训练后评估 PPL |
+| `--eval_lm_eval` | 训练后运行 lm_eval |
+
+### 训练流程说明
+
+1. **加载预训练模型**：以 BF16 精度加载原始 HuggingFace 模型
+2. **替换 Linear 层**：将 `nn.Linear` 替换为 `QuantizeLinear`（跳过 `lm_head` 和 `embed` 层）
+3. **初始化量化步长**：根据权重分布自动计算 `weight_clip_val`（量化步长 α）
+4. **QAT 训练**：使用 STE（Straight-Through Estimator）反向传播，同时学习权重和量化步长
+5. **评估**：训练结束后自动运行 PPL 和 zero-shot 评估
+
+### 训练输出
+
+模型保存路径：`/tmp/llama/models/<output_model_filename>/`
+
+保存的文件包括：
+- `pytorch_model.bin` 或 `model.safetensors`：包含量化后的权重和学习到的 `weight_clip_val`
+- `config.json`：模型配置
+- `tokenizer` 相关文件
+
+---
+
+## 项目结构
+
+```
+paretoq/
+├── train.py                    # 主训练/评估入口
+├── gen_data.py                 # 数据生成脚本
+├── requirement.txt             # Python 依赖
+├── README.md                   # 本文档
+├── scripts/
+│   ├── train.sh                # QAT 训练脚本
+│   ├── eval_bf16.sh            # BF16 baseline 评估脚本
+│   └── eval.sh                 # 量化模型评估脚本
+└── utils/
+    ├── __init__.py
+    ├── utils.py                # 通用工具（set_seed, logger, save_model）
+    ├── utils_quant.py          # 量化核心模块（QuantizeLinear, replace_linear_with_quantized）
+    ├── datautils.py            # 数据加载（CustomJsonDataset, get_loaders, PPL数据）
+    ├── process_args.py         # 参数定义与解析
+    └── eval.py                 # 评估逻辑（PPL + lm_eval）
+```
+
+### 核心模块说明
+
+| 模块 | 功能 |
+|------|------|
+| `utils/utils_quant.py` | 量化 Linear 层实现，包含 `LsqBinaryTernaryExtension`（1/3/4-bit）和 `StretchedElasticQuant`（2-bit）两种量化方法 |
+| `utils/datautils.py` | 训练数据处理（jsonl → tokenized → grouped chunks）和 PPL 评估数据加载 |
+| `utils/eval.py` | PPL 评估（wikitext2, c4）和 lm_eval zero-shot 评估（piqa, hellaswag 等） |
+| `utils/process_args.py` | 命令行参数定义：`ModelArguments`, `DataArguments`, `TrainingArguments`, `EvalArguments` |
+
+---
+
+## 关键参数说明
+
+### 量化位数 (`--w_bits`)
+
+| 值 | 含义 | 量化方法 |
+|----|------|----------|
+| 1 | 1-bit Binary（-α, +α） | `LsqBinaryTernaryExtension`，sign 函数 |
+| 2 | 2-bit Ternary | `StretchedElasticQuant`，拉伸弹性量化 |
+| 3 | 3-bit（-4 ~ +3）| `LsqBinaryTernaryExtension`，round + clamp |
+| 4 | 4-bit（-8 ~ +7）| `LsqBinaryTernaryExtension`，round + clamp |
+| 16 | 不量化（BF16 全精度）| 不替换 Linear 层 |
+
+### 可复现性设置
+
+为确保两次训练结果完全一致，在训练脚本中添加以下参数即可：
+
+```bash
+--seed 42 \
+--full_determinism True \
+--dataloader_num_workers 0 \
+```
+
+**说明：**
+
+| 参数 | 作用 |
+|------|------|
+| `--seed 42` | 固定所有随机种子（Python、NumPy、PyTorch） |
+| `--full_determinism True` | 启用完全确定性模式，内部会设置 `FLASH_ATTENTION_DETERMINISTIC=1`、`CUDA_LAUNCH_BLOCKING=1`、`torch.use_deterministic_algorithms(True)` 等 |
+| `--dataloader_num_workers 0` | 避免多线程数据加载引入的顺序不确定性 |
+
+> 💡 设置了 `--full_determinism True` 后，无需在代码中手动调用 `set_seed()` 或设置 `cudnn.deterministic` 等，Trainer 会自动处理所有确定性相关设置。
+
+---
+
+## 常见问题 (FAQ)
+
+### Q1: 评估时出现 SIGFPE (Signal 8) 崩溃
+
+**原因**：PyTorch cu121 的 SDPA kernel 在 Hopper 架构 GPU（H20/H100）上有浮点异常 bug。
+
+**解决方案**：升级到 PyTorch cu124：
+```bash
+pip uninstall torch torchvision torchaudio -y
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+### Q2: 训练时显存不足 (OOM)
+
+- 减小 `--per_device_train_batch_size`（如 4 或 2）
+- 开启梯度检查点：`--gradient_checkpointing True`
+- 减小 `--model_max_length`（如 1024）
+
+---
 
 ## License
 
-ParetoQ is released under the [BSD 3](https://github.com/facebookresearch/ParetoQ/blob/main/LICENSE) license.
+BSD-style License. See [LICENSE](./LICENSE) for details.

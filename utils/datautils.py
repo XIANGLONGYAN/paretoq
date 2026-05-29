@@ -13,6 +13,10 @@ from typing import Dict, Sequence
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
+
+from datasets import load_dataset
+from transformers import AutoTokenizer
 
 
 IGNORE_INDEX = -100
@@ -20,6 +24,39 @@ DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_BOS_TOKEN = "<s>"
 DEFAULT_UNK_TOKEN = "<unk>"
+
+def get_loaders(tokenizer, name, seed=0, seqlen=2048, cache_dir=None):
+    if "wikitext2" in name:
+        testdata = load_dataset("wikitext", "wikitext-2-raw-v1", split="test", cache_dir=cache_dir)
+        return tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
+    elif "c4" in name:
+        valdata = load_dataset(
+            "allenai/c4",
+            data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
+            split="validation",
+            cache_dir=cache_dir,
+        )
+        random.seed(seed)
+        valenc = []
+        for _ in range(256):
+            while True:
+                i = random.randint(0, len(valdata) - 1)
+                tmp = tokenizer(valdata[i]["text"], return_tensors="pt")
+                if tmp.input_ids.shape[1] > seqlen:
+                    break
+            i = random.randint(0, tmp.input_ids.shape[1] - seqlen - 1)
+            valenc.append(tmp.input_ids[:, i : i + seqlen])
+        return torch.hstack(valenc)
+    raise NotImplementedError(f"Unsupported PPL dataset: {name}")
+    
+def get_wikitext2(tokenizer: AutoTokenizer,  sequence_length: int):
+    test_dataset_raw = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+    test_dataset_tok = tokenizer("\n\n".join(test_dataset_raw["text"]), return_tensors="pt").input_ids
+    num_test_sequences = test_dataset_tok.numel() // sequence_length
+    test_loader = []
+    for i in range(num_test_sequences):
+        test_loader.append(test_dataset_tok[:, i * sequence_length : (i + 1) * sequence_length])
+    return test_loader
 
 
 def set_seed(seed):
@@ -53,7 +90,7 @@ def get_train_val_dataset(train_path, valid_path=None):
     return train_data, valid_data
 
 
-class CustomJsonDataset(torch.utils.data.IterableDataset):
+class CustomJsonDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, tokenizer, block_size=1024):
         raw_data = dataset
         self.tokenizer = tokenizer

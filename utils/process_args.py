@@ -6,7 +6,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 import transformers
 
@@ -61,6 +61,24 @@ class DataArguments:
         default=None, metadata={"help": "Eval data local path"}
     )
 
+@dataclass
+class EvalArguments:
+    tasks: Optional[str] = field(
+        default="piqa,arc_easy,arc_challenge,hellaswag,winogrande,mmlu,gsm8k_llama",
+        metadata={"help": "Comma-separated list of lm_eval tasks (e.g., piqa,arc_easy,hellaswag)"},
+    )
+    eval_ppl: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to run PPL evaluation on wikitext2 and c4"},
+    )
+    eval_lm_eval: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to run lm_eval zero-shot evaluation"},
+    )
+    eval_batch_size: Optional[int] = field(
+        default=64,
+        metadata={"help": "Batch size for lm_eval evaluation"},
+    )
 
 
 @dataclass
@@ -79,9 +97,9 @@ class TrainingArguments(transformers.TrainingArguments):
 
 def process_args():
     parser = transformers.HfArgumentParser(
-        (ModelArguments, DataArguments, TrainingArguments)
+        (ModelArguments, DataArguments, TrainingArguments, EvalArguments)
     )
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args, eval_args = parser.parse_args_into_dataclasses()
 
     os.makedirs(model_args.local_dir, exist_ok=True)
 
@@ -91,4 +109,4 @@ def process_args():
         model_args.local_dir, "models", str(model_args.output_model_filename)
     )
 
-    return model_args, data_args, training_args
+    return model_args, data_args, training_args, eval_args

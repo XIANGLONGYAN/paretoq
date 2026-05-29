@@ -251,7 +251,7 @@ class QuantizeLinear(nn.Linear):
         w_bits=16,
         weight_layerwise=False,
     ):
-        super(QuantizeLinear, self).__init__(*kargs, bias=False)
+        super(QuantizeLinear, self).__init__(*kargs, bias=bias)
         self.w_bits = w_bits
         self.weight_layerwise = weight_layerwise
         # params for weight quant
@@ -287,3 +287,70 @@ class QuantizeLinear(nn.Linear):
             out += self.bias.view(1, -1).expand_as(out)
 
         return out
+
+    @classmethod
+    def from_linear(cls, linear: nn.Linear, w_bits: int, weight_layerwise: bool = False):
+        """从现有 nn.Linear 创建 QuantizeLinear，复制权重"""
+        quant_linear = cls(
+            linear.in_features,
+            linear.out_features,
+            bias=linear.bias is not None,
+            w_bits=w_bits,
+            weight_layerwise=weight_layerwise,
+        )
+        # 复制权重（共享参数以节省内存）
+        quant_linear.weight = linear.weight
+        if linear.bias is not None:
+            quant_linear.bias = linear.bias
+        return quant_linear
+    
+def replace_linear_with_quantized(
+    model: nn.Module,
+    w_bits: int,
+    weight_layerwise: bool = False,
+    skip_keywords: list = None,
+):
+    """
+    递归遍历模型，将 nn.Linear 替换为 QuantizeLinear。
+    
+    Args:
+        model: HuggingFace 模型
+        w_bits: 量化位数，>=16 时不替换（保持原始精度）
+        weight_layerwise: 是否按行量化
+        skip_keywords: 不量化的层名关键词列表，如 ["lm_head", "embed"]
+    """
+    if w_bits >= 16:
+        # 不量化，直接返回
+        return model
+    
+    if skip_keywords is None:
+        skip_keywords = ["lm_head", "embed"]
+    
+    # 收集需要替换的模块（不能在遍历时修改）
+    replace_list = []
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear) and not isinstance(module, QuantizeLinear):
+            if any(kw in name for kw in skip_keywords):
+                continue
+            replace_list.append((name, module))
+    
+    # 执行替换
+    for name, module in replace_list:
+        quant_linear = QuantizeLinear.from_linear(module, w_bits=w_bits, weight_layerwise=weight_layerwise)
+        # 递归 setattr
+        _set_module_by_name(model, name, quant_linear)
+    
+    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits})")
+    return model
+
+
+def _set_module_by_name(model: nn.Module, name: str, new_module: nn.Module):
+    """通过点分隔的名称路径设置子模块"""
+    parts = name.split(".")
+    parent = model
+    for part in parts[:-1]:
+        if part.isdigit():
+            parent = parent[int(part)]
+        else:
+            parent = getattr(parent, part)
+    setattr(parent, parts[-1], new_module)

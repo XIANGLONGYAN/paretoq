@@ -1,0 +1,35 @@
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29505 train.py \
+--local_dir "/tmp/llama/" \
+--input_model_filename "/jizhicfs/jackxlyan/pretrained/llama3.2/llama-3.2-1B" \
+--output_model_filename "1B-bf16-baseline" \
+--train_data_local_path "/jizhicfs/jackxlyan/dataset/paretoq_data/wikitext_wikitext-2-raw-v1_train.jsonl" \
+--eval_data_local_path "/jizhicfs/jackxlyan/dataset/paretoq_data/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--do_train False \
+--do_eval False \
+--model_max_length 2048 \
+--fp16 False \
+--bf16 True \
+--log_on_each_node False \
+--logging_dir /tmp/output/runs/bf16_eval \
+--num_train_epochs 1 \
+--per_device_train_batch_size 8 \
+--per_device_eval_batch_size 1 \
+--gradient_accumulation_steps 1 \
+--evaluation_strategy "no" \
+--save_strategy "steps" \
+--save_steps 2000 \
+--report_to "none" \
+--save_total_limit 1 \
+--learning_rate 2e-5 \
+--weight_decay 0. \
+--warmup_ratio 0. \
+--lr_scheduler_type "cosine" \
+--logging_steps 1 \
+--tf32 False \
+--gradient_checkpointing False \
+--qat True \
+--w_bits 16 \
+--eval_ppl \
+--eval_lm_eval \
+--tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
+--eval_batch_size 16
