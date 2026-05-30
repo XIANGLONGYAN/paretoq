@@ -17,6 +17,58 @@ from utils.utils_quant import replace_linear_with_quantized
 log = utils.get_logger("clm")
 
 
+class MuonTrainer(Trainer):
+    def create_optimizer(self):
+        if self.optimizer is not None:
+            return self.optimizer
+
+        if not self.args.use_muon:
+            return super().create_optimizer()
+
+        from optimizer.muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
+
+        # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head)
+        hidden_matrix_params = [
+            p for n, p in self.model.named_parameters() 
+            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n
+        ]
+        other_params = [
+            p for n, p in self.model.named_parameters() 
+            if p.ndim < 2 or "embed" in n or "lm_head" in n
+        ]
+
+        muon_lr = (
+            self.args.muon_learning_rate 
+            if self.args.muon_learning_rate is not None 
+            else self.args.learning_rate * 10
+        )
+
+        param_groups = [
+            {
+                "params": hidden_matrix_params,
+                "lr": muon_lr,
+                "momentum": 0.95,
+                "weight_decay": self.args.weight_decay,
+                "use_muon": True,
+            },
+            {
+                "params": other_params,
+                "lr": self.args.learning_rate,
+                "betas": (0.9, 0.95),
+                "eps": 1e-8,
+                "weight_decay": self.args.weight_decay,
+                "use_muon": False,
+            }
+        ]
+
+        if dist.is_initialized():
+            self.optimizer = MuonWithAuxAdam(param_groups)
+        else:
+            self.optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
+
+        return self.optimizer
+
+
 def train():
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args, eval_args = process_args()
@@ -85,7 +137,7 @@ def train():
         valid_dataset, tokenizer, block_size=min(training_args.model_max_length, 1024)
     )
     model.config.use_cache = False
-    myTrainer = Trainer
+    myTrainer = MuonTrainer
     trainer = myTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -114,6 +166,8 @@ def train():
         )
 
     torch.distributed.barrier()
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

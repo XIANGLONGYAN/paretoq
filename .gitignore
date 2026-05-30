@@ -17,5 +17,8 @@ eval_results/
 # 保存的模型
 models/
 
+# 检查点
+output/
+
 # 隔离 scripts/ 的脚本文件
 skip_worktree.sh
