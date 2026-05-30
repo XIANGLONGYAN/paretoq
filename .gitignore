@@ -1,4 +1,3 @@
-cat > .gitignore << 'EOF'
 # wandb 训练日志
 wandb/
 
@@ -11,4 +10,12 @@ __pycache__/
 *.swp
 *.swo
 .DS_Store
-EOF
+
+# eval 结果
+eval_results/
+
+# 保存的模型
+models/
+
+# 隔离 scripts/ 的脚本文件
+skip_worktree.sh
