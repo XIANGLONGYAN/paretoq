@@ -90,6 +90,7 @@ def train():
             w_bits=model_args.w_bits,
             weight_layerwise=False,
             skip_keywords=["lm_head", "embed"],
+            use_stableqat=training_args.use_stableqat,
         )
         if not model_args.contain_weight_clip_val:
             for name, param in model.named_parameters():

@@ -9,6 +9,18 @@ import math
 import torch
 import torch.nn as nn
 
+def stableqat_surrogate_gradient(v, amplitude):
+    """计算 StableQAT 的傅里叶余弦平滑梯度系数 g(v)"""
+    item = torch.pi * (v + v.round())
+    sum_term = 0
+    for idx in range(len(amplitude)):
+        sum_term += amplitude[idx] * torch.cos((2 * idx + 1) * item)
+    
+    denom = 1 + pow(2, 0.5) * torch.pi * sum_term
+    denom = torch.clamp(denom, min=1e-5)
+    grad_x = (1 - pow(2, 0.5) * torch.pi * sum_term) / denom
+    return grad_x
+
 class LsqBinaryTernaryExtension(torch.autograd.Function):
     """
     Modified from Learned Step-size Quantization.
@@ -16,7 +28,7 @@ class LsqBinaryTernaryExtension(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input, alpha, num_bits, layerwise):
+    def forward(ctx, input, alpha, num_bits, layerwise, sine_soft_q=None):
         """
         :param input: input to be quantized
         :param alpha: the step size
@@ -45,6 +57,7 @@ class LsqBinaryTernaryExtension(torch.autograd.Function):
         )
         ctx.save_for_backward(input, alpha)
         ctx.other = grad_scale, Qn, Qp, layerwise
+        ctx.sine_soft_q = sine_soft_q
         if num_bits == 1:
             q_w = input.sign()
         else:
@@ -55,7 +68,7 @@ class LsqBinaryTernaryExtension(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         if ctx.num_bits >= 16:
-            return grad_output, None, None, None
+            return grad_output, None, None, None, None
 
         input_, alpha = ctx.saved_tensors
         grad_scale, Qn, Qp, layerwise = ctx.other
@@ -100,8 +113,12 @@ class LsqBinaryTernaryExtension(torch.autograd.Function):
                 )
                 grad_alpha = torch.sum(grad_alpha, dim=-1, keepdim=True)
 
-        grad_input = indicate_middle * grad_output
-        return grad_input, grad_alpha, None, None
+        if ctx.sine_soft_q is not None and ctx.sine_soft_q.get('enable', False):
+            grad_x = stableqat_surrogate_gradient(q_w, ctx.sine_soft_q['amplitude'])
+            grad_input = indicate_middle * grad_output * grad_x
+        else:
+            grad_input = indicate_middle * grad_output
+        return grad_input, grad_alpha, None, None, None
 
 
 class StretchedElasticQuant(torch.autograd.Function):
@@ -250,10 +267,19 @@ class QuantizeLinear(nn.Linear):
         bias=False,
         w_bits=16,
         weight_layerwise=False,
+        use_stableqat: bool = False,
     ):
         super(QuantizeLinear, self).__init__(*kargs, bias=bias)
         self.w_bits = w_bits
         self.weight_layerwise = weight_layerwise
+        self.use_stableqat = use_stableqat
+        
+        # 注册为 PyTorch Buffer，支持自动设备迁移与多卡分布式训练
+        if use_stableqat:
+            self.register_buffer('sine_amplitude', torch.tensor([0.21]))
+        else:
+            self.register_buffer('sine_amplitude', torch.tensor([]))
+            
         # params for weight quant
         if self.w_bits < 16:
             self.weight_clip_val = nn.Parameter(torch.Tensor(self.weight.shape[0], 1))
@@ -273,11 +299,16 @@ class QuantizeLinear(nn.Linear):
                 self.weight_layerwise,
             ).to(input_.dtype)
         elif self.w_bits <= 4:
+            sine_soft_q = {
+                'enable': self.use_stableqat,
+                'amplitude': self.sine_amplitude if self.use_stableqat else None
+            }
             weight = LsqBinaryTernaryExtension.apply(
                 real_weights,
                 self.weight_clip_val,
                 self.w_bits,
                 self.weight_layerwise,
+                sine_soft_q,
             ).to(input_.dtype)
         else:
             raise NotImplementedError
@@ -289,7 +320,7 @@ class QuantizeLinear(nn.Linear):
         return out
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear, w_bits: int, weight_layerwise: bool = False):
+    def from_linear(cls, linear: nn.Linear, w_bits: int, weight_layerwise: bool = False, use_stableqat: bool = False):
         """从现有 nn.Linear 创建 QuantizeLinear，复制权重"""
         quant_linear = cls(
             linear.in_features,
@@ -297,6 +328,7 @@ class QuantizeLinear(nn.Linear):
             bias=linear.bias is not None,
             w_bits=w_bits,
             weight_layerwise=weight_layerwise,
+            use_stableqat=use_stableqat,
         )
         # 复制权重（共享参数以节省内存）
         quant_linear.weight = linear.weight
@@ -309,6 +341,7 @@ def replace_linear_with_quantized(
     w_bits: int,
     weight_layerwise: bool = False,
     skip_keywords: list = None,
+    use_stableqat: bool = False,
 ):
     """
     递归遍历模型，将 nn.Linear 替换为 QuantizeLinear。
@@ -318,6 +351,7 @@ def replace_linear_with_quantized(
         w_bits: 量化位数，>=16 时不替换（保持原始精度）
         weight_layerwise: 是否按行量化
         skip_keywords: 不量化的层名关键词列表，如 ["lm_head", "embed"]
+        use_stableqat: 是否启用 StableQAT
     """
     if w_bits >= 16:
         # 不量化，直接返回
@@ -336,11 +370,11 @@ def replace_linear_with_quantized(
     
     # 执行替换
     for name, module in replace_list:
-        quant_linear = QuantizeLinear.from_linear(module, w_bits=w_bits, weight_layerwise=weight_layerwise)
+        quant_linear = QuantizeLinear.from_linear(module, w_bits=w_bits, weight_layerwise=weight_layerwise, use_stableqat=use_stableqat)
         # 递归 setattr
         _set_module_by_name(model, name, quant_linear)
     
-    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits})")
+    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits}, use_stableqat={use_stableqat})")
     return model
 
 
