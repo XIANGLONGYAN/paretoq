@@ -93,6 +93,18 @@ class TrainingArguments(transformers.TrainingArguments):
         },
     )
     qat: Optional[bool] = field(default=False)
+    use_muon: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use Muon optimizer. When True, bypasses native optim validation."}
+    )
+    muon_learning_rate: Optional[float] = field(
+        default=None,
+        metadata={"help": "Learning rate for Muon optimizer. If not set, defaults to learning_rate * 10."}
+    )
+    use_stableqat: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to enable StableQAT (Fourier surrogate gradient) during QAT."}
+    )
 
 
 def process_args():
