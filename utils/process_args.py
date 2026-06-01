@@ -105,6 +105,10 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to enable StableQAT (Fourier surrogate gradient) during QAT."}
     )
+    use_lsq: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use LSQ (Learned Step Size Quantization) during QAT."}
+    )
 
 
 def process_args():

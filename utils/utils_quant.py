@@ -268,11 +268,13 @@ class QuantizeLinear(nn.Linear):
         w_bits=16,
         weight_layerwise=False,
         use_stableqat: bool = False,
+        use_lsq: bool = False
     ):
         super(QuantizeLinear, self).__init__(*kargs, bias=bias)
         self.w_bits = w_bits
         self.weight_layerwise = weight_layerwise
         self.use_stableqat = use_stableqat
+        self.use_lsq = use_lsq
         
         # 注册为 PyTorch Buffer，支持自动设备迁移与多卡分布式训练
         if use_stableqat:
@@ -282,7 +284,10 @@ class QuantizeLinear(nn.Linear):
             
         # params for weight quant
         if self.w_bits < 16:
-            self.weight_clip_val = nn.Parameter(torch.Tensor(self.weight.shape[0], 1))
+            if self.use_lsq:
+                self.weight_clip_val = nn.Parameter(torch.Tensor(self.weight.shape[0], 1))
+            else:
+                self.register_buffer('weight_clip_val', torch.Tensor(self.weight.shape[0], 1))
 
     def forward(self, input_):
         # quantize weight
@@ -291,27 +296,40 @@ class QuantizeLinear(nn.Linear):
 
         if self.w_bits >= 16:
             weight = self.weight
-        elif self.w_bits == 2 or self.w_bits == 0:
-            weight = StretchedElasticQuant.apply(
-                real_weights,
-                self.weight_clip_val,
-                self.w_bits,
-                self.weight_layerwise,
-            ).to(input_.dtype)
-        elif self.w_bits <= 4:
-            sine_soft_q = {
-                'enable': self.use_stableqat,
-                'amplitude': self.sine_amplitude if self.use_stableqat else None
-            }
-            weight = LsqBinaryTernaryExtension.apply(
-                real_weights,
-                self.weight_clip_val,
-                self.w_bits,
-                self.weight_layerwise,
-                sine_soft_q,
-            ).to(input_.dtype)
         else:
-            raise NotImplementedError
+            if not self.use_lsq:
+                with torch.no_grad():
+                    if self.w_bits == 2 or self.w_bits == 0:
+                        scale, _ = torch.max(torch.abs(real_weights), dim=-1, keepdim=True)
+                    elif self.w_bits <= 4:
+                        xmax, _ = torch.max(torch.abs(real_weights), dim=-1, keepdim=True)
+                        maxq = 2 ** (self.w_bits - 1) - 1
+                        scale = xmax / maxq
+                    else:
+                        raise NotImplementedError
+                    self.weight_clip_val.copy_(scale)
+
+            if self.w_bits == 2 or self.w_bits == 0:
+                weight = StretchedElasticQuant.apply(
+                    real_weights,
+                    self.weight_clip_val,
+                    self.w_bits,
+                    self.weight_layerwise,
+                ).to(input_.dtype)
+            elif self.w_bits <= 4:
+                sine_soft_q = {
+                    'enable': self.use_stableqat,
+                    'amplitude': self.sine_amplitude if self.use_stableqat else None
+                }
+                weight = LsqBinaryTernaryExtension.apply(
+                    real_weights,
+                    self.weight_clip_val,
+                    self.w_bits,
+                    self.weight_layerwise,
+                    sine_soft_q,
+                ).to(input_.dtype)
+            else:
+                raise NotImplementedError
 
         out = nn.functional.linear(input_, weight)
         if self.bias is not None:
@@ -320,7 +338,7 @@ class QuantizeLinear(nn.Linear):
         return out
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear, w_bits: int, weight_layerwise: bool = False, use_stableqat: bool = False):
+    def from_linear(cls, linear: nn.Linear, w_bits: int, weight_layerwise: bool = False, use_stableqat: bool = False, use_lsq: bool = False):
         """从现有 nn.Linear 创建 QuantizeLinear，复制权重"""
         quant_linear = cls(
             linear.in_features,
@@ -329,6 +347,7 @@ class QuantizeLinear(nn.Linear):
             w_bits=w_bits,
             weight_layerwise=weight_layerwise,
             use_stableqat=use_stableqat,
+            use_lsq=use_lsq,
         )
         # 复制权重（共享参数以节省内存）
         quant_linear.weight = linear.weight
@@ -342,6 +361,7 @@ def replace_linear_with_quantized(
     weight_layerwise: bool = False,
     skip_keywords: list = None,
     use_stableqat: bool = False,
+    use_lsq: bool = False,
 ):
     """
     递归遍历模型，将 nn.Linear 替换为 QuantizeLinear。
@@ -352,6 +372,7 @@ def replace_linear_with_quantized(
         weight_layerwise: 是否按行量化
         skip_keywords: 不量化的层名关键词列表，如 ["lm_head", "embed"]
         use_stableqat: 是否启用 StableQAT
+        use_lsq: 是否启用 LSQ
     """
     if w_bits >= 16:
         # 不量化，直接返回
@@ -370,11 +391,11 @@ def replace_linear_with_quantized(
     
     # 执行替换
     for name, module in replace_list:
-        quant_linear = QuantizeLinear.from_linear(module, w_bits=w_bits, weight_layerwise=weight_layerwise, use_stableqat=use_stableqat)
+        quant_linear = QuantizeLinear.from_linear(module, w_bits=w_bits, weight_layerwise=weight_layerwise, use_stableqat=use_stableqat, use_lsq=use_lsq)
         # 递归 setattr
         _set_module_by_name(model, name, quant_linear)
     
-    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits}, use_stableqat={use_stableqat})")
+    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits}, use_stableqat={use_stableqat}, use_lsq={use_lsq})")
     return model
 
 

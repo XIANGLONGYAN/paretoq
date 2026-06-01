@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, default_data_collator, Trainer
 from utils import utils, datautils
 from utils.process_args import process_args
 from utils.eval import run_evaluation
-from utils.utils_quant import replace_linear_with_quantized
+from utils.utils_quant import replace_linear_with_quantized, QuantizeLinear
 
 
 log = utils.get_logger("clm")
@@ -27,14 +27,14 @@ class MuonTrainer(Trainer):
 
         from optimizer.muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
 
-        # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head)
+        # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head, not weight_clip_val)
         hidden_matrix_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n
+            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n and "weight_clip_val" not in n
         ]
         other_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim < 2 or "embed" in n or "lm_head" in n
+            if p.ndim < 2 or "embed" in n or "lm_head" in n or "weight_clip_val" in n
         ]
 
         muon_lr = (
@@ -91,13 +91,12 @@ def train():
             weight_layerwise=False,
             skip_keywords=["lm_head", "embed"],
             use_stableqat=training_args.use_stableqat,
+            use_lsq=training_args.use_lsq,
         )
         if not model_args.contain_weight_clip_val:
-            for name, param in model.named_parameters():
-                if "weight_clip_val" in name:
-                    weight_name = name.replace("weight_clip_val", "weight")
-                    weight_param = dict(model.named_parameters()).get(weight_name, None)
-
+            for name, module in model.named_modules():
+                if isinstance(module, QuantizeLinear):
+                    weight_param = module.weight
                     if model_args.w_bits == 1:
                         scale = torch.mean(weight_param.abs(), dim=-1, keepdim=True).detach()
                     elif model_args.w_bits == 0 or model_args.w_bits == 2:
@@ -109,7 +108,7 @@ def train():
                     else:
                         raise NotImplementedError
 
-                    param.data.copy_(scale)
+                    module.weight_clip_val.copy_(scale)
 
     model.cuda()
     log.info("Complete model loading...")
