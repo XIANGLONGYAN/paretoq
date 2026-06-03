@@ -12,20 +12,21 @@
 # 6. Ultra-FineWeb (openbmb/Ultra-FineWeb)
 #
 # 特性：
-# - 统一保存至目标目录: ~/data2/dataset/
+# - 统一保存至目标目录: /data2/datasets/
+# - 为每个 dataset_name 相同的数据集创建一个文件夹，并下载到该文件夹中。
 # - 在执行每个数据集/划分的下载生成前，会自动检查该目录中是否已有对应文件，若有则自动跳过。
 # ==============================================================================
 
 # 1. 基础配置
-OUTPUT_DIR="$HOME/data2/dataset"
+BASE_DIR="/data2/datasets"
 MIN_LENGTH=10
 
 # 2. 创建目标输出目录
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$BASE_DIR"
 
 echo "=============================================================="
 echo "      开始检查并收集 ParetoQ 训练/评估数据集"
-echo "      输出目录: $OUTPUT_DIR"
+echo "      基础目录: $BASE_DIR"
 echo "=============================================================="
 
 # 3. 数据集处理核心函数
@@ -42,8 +43,13 @@ download_and_generate() {
 
     # 按照 gen_data.py 的命名逻辑转换斜杠为下划线
     local clean_name="${name//\//_}"
+    
+    # 为每一个dataset_name相同的数据集创建一个文件夹
+    local dataset_dir="$BASE_DIR/$clean_name"
+    mkdir -p "$dataset_dir"
+    
     local filename="${clean_name}_${config}_${split}.jsonl"
-    local filepath="$OUTPUT_DIR/$filename"
+    local filepath="$dataset_dir/$filename"
 
     echo ""
     echo "--> [检查阶段] 数据集: $name / $config | 划分: $split"
@@ -60,7 +66,7 @@ download_and_generate() {
             --dataset_name \"$name\" \
             --dataset_config \"$config\" \
             --splits \"$split\" \
-            --output_dir \"$OUTPUT_DIR\" \
+            --output_dir \"$dataset_dir\" \
             --min_length $MIN_LENGTH"
 
         if [ -n "$max_samples" ]; then
@@ -98,20 +104,25 @@ download_and_generate "allenai/c4" "en" "validation" # 10000
 
 # --- [3] Fineweb-edu (HuggingFaceFW/fineweb-edu) ---
 # 常用子集为 sample-10BT，主要包含 train 划分
-# download_and_generate "HuggingFaceFW/fineweb-edu" "sample-10BT" "train" # 50000
+download_and_generate "HuggingFaceFW/fineweb-edu" "sample-10BT" "train" # 50000
 
 # --- [4] RedPajama (togethercomputer/RedPajama-Data-1T) ---
 # 采用 default 子集，主要包含 train 划分
 # download_and_generate "togethercomputer/RedPajama-Data-1T" "default" "train" # 50000
 
-# --- [5] SlimPajama (cerebras/SlimPajama-627B) ---
+# --- [5] SlimPajama (gmongaras/SlimPajama-627B_Reupload) ---
 # 包含 train, test, validation 划分
-# download_and_generate "cerebras/SlimPajama-627B" "default" "train" # 50000
-# download_and_generate "cerebras/SlimPajama-627B" "default" "test" # 10000
+download_and_generate "gmongaras/SlimPajama-627B_Reupload" "default" "train" # 50000
+download_and_generate "gmongaras/SlimPajama-627B_Reupload" "default" "test" # 10000
 
 # --- [6] Ultra-FineWeb (openbmb/Ultra-FineWeb) ---
 # 包含 en (英语) 和 zh (中文) 划分。这里默认下载 en 划分。
 # download_and_generate "openbmb/Ultra-FineWeb" "default" "en" # 50000
+
+# --- [7] wikitext103 ---
+# 包含 train, test, validation 划分
+download_and_generate "wikitext" "wikitext-103-raw-v1" "train"
+download_and_generate "wikitext" "wikitext-103-raw-v1" "test"
 
 echo ""
 echo "=============================================================="

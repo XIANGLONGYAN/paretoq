@@ -30,11 +30,11 @@ class MuonTrainer(Trainer):
         # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head, not weight_clip_val)
         hidden_matrix_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n and "weight_clip_val" not in n
+            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n # and "weight_clip_val" not in n
         ]
         other_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim < 2 or "embed" in n or "lm_head" in n or "weight_clip_val" in n
+            if p.ndim < 2 or "embed" in n or "lm_head" in n # or "weight_clip_val" in n
         ]
 
         muon_lr = (
@@ -108,7 +108,7 @@ def train():
                     else:
                         raise NotImplementedError
 
-                    module.weight_clip_val.copy_(scale)
+                    module.weight_clip_val.data.copy_(scale)
 
     model.cuda()
     log.info("Complete model loading...")
