@@ -275,6 +275,10 @@ class QuantizeLinear(nn.Linear):
         self.weight_layerwise = weight_layerwise
         self.use_stableqat = use_stableqat
         self.use_lsq = use_lsq
+
+        # weight_layerwise 暂时不支持 True，会和 LsqBinaryTernaryExtension 的 alpha 维度冲突
+        if self.weight_layerwise:
+            raise NotImplementedError("weight_layerwise is not supported yet.")
         
         # 注册为 PyTorch Buffer，支持自动设备迁移与多卡分布式训练
         if use_stableqat:

@@ -57,15 +57,28 @@ def parse_args():
         default=None,
         help="Maximum number of samples to keep per split (None = keep all)",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--text_key",
+        type=str,
+        default="text",
+        help="The key of the text field in the dataset (e.g., text, content, raw)",
+    )
+    args = parser.parse_args()
+    if args.dataset_config in ("None", "none", ""):
+        args.dataset_config = None
+    return args
 
 
-def generate_jsonl(dataset_split, output_path, min_length, max_samples=None):
+def generate_jsonl(dataset_split, output_path, min_length, text_key="text", max_samples=None):
     """将 dataset split 转换为 jsonl 文件"""
     count = 0
     with open(output_path, "w", encoding="utf-8") as f:
         for example in dataset_split:
-            text = example["text"].strip()
+            text = example.get(text_key)
+            if text is None:
+                raise KeyError(f"Could not find text key '{text_key}' in dataset example. Available keys: {list(example.keys())}")
+            
+            text = text.strip()
             if len(text) >= min_length:
                 f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
                 count += 1
@@ -96,7 +109,7 @@ def main():
         output_path = os.path.join(args.output_dir, filename)
         print(f"Loading {split} split...")
         ds = load_dataset(args.dataset_name, args.dataset_config, split=split)
-        count = generate_jsonl(ds, output_path, args.min_length, args.max_samples)
+        count = generate_jsonl(ds, output_path, args.min_length, args.text_key, args.max_samples, trust_remote_code=True)
         print(f"  -> Saved {count} samples to {output_path}")
 
     print("-" * 50)

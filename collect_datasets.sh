@@ -40,6 +40,7 @@ download_and_generate() {
     local config="$2"
     local split="$3"
     local max_samples="$4"
+    local text_key="$5"
 
     # 按照 gen_data.py 的命名逻辑转换斜杠为下划线
     local clean_name="${name//\//_}"
@@ -76,14 +77,28 @@ download_and_generate() {
             echo "    >>> 设定无样本数限制（下载完整划分）"
         fi
 
-        echo "    运行命令: $cmd"
-        eval "$cmd"
-
-        if [ $? -eq 0 ]; then
-            echo "    >>> [成功] $filename 处理完成并保存！"
-        else
-            echo "    >>> [失败] 处理 $name ($config) - $split 时出错！"
+        if [ -n "$text_key" ]; then
+            cmd="$cmd --text_key \"$text_key\""
+            echo "    >>> 设定文本字段键名: $text_key"
         fi
+
+        local success=0
+        local retry_count=0
+        while [ $success -eq 0 ]; do
+            echo "    运行命令: $cmd"
+            eval "$cmd"
+            local exit_code=$?
+
+            if [ $exit_code -eq 0 ]; then
+                success=1
+                echo "    >>> [成功] $filename 处理完成并保存！"
+            else
+                retry_count=$((retry_count + 1))
+                echo "    >>> [失败] 处理 $name ($config) - $split 时出错 (第 $retry_count 次失败)。"
+                echo "    >>> 将在 3 秒后自动重启下载..."
+                sleep 3
+            fi
+        done
     fi
     echo "--------------------------------------------------------------"
 }
@@ -112,12 +127,12 @@ download_and_generate "HuggingFaceFW/fineweb-edu" "sample-10BT" "train" # 50000
 
 # --- [5] SlimPajama (gmongaras/SlimPajama-627B_Reupload) ---
 # 包含 train, test, validation 划分
-download_and_generate "gmongaras/SlimPajama-627B_Reupload" "default" "train" # 50000
-download_and_generate "gmongaras/SlimPajama-627B_Reupload" "default" "test" # 10000
+# download_and_generate "gmongaras/SlimPajama-627B_Reupload" "None" "train" # 50000
+# download_and_generate "gmongaras/SlimPajama-627B_Reupload" "None" "test" # 10000
 
 # --- [6] Ultra-FineWeb (openbmb/Ultra-FineWeb) ---
 # 包含 en (英语) 和 zh (中文) 划分。这里默认下载 en 划分。
-# download_and_generate "openbmb/Ultra-FineWeb" "default" "en" # 50000
+download_and_generate "openbmb/Ultra-FineWeb" "None" "en" "" "content"
 
 # --- [7] wikitext103 ---
 # 包含 train, test, validation 划分
