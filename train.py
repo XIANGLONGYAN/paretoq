@@ -109,6 +109,61 @@ def train():
                         raise NotImplementedError
 
                     module.weight_clip_val.data.copy_(scale)
+        else:
+            log.info("Loading saved quantized parameters (weight_clip_val) from checkpoint...")
+            import os
+            import json
+            state_dict = {}
+            checkpoint_dir = model_args.input_model_filename
+            
+            index_path_safe = os.path.join(checkpoint_dir, "model.safetensors.index.json")
+            index_path_bin = os.path.join(checkpoint_dir, "pytorch_model.bin.index.json")
+            
+            loaded = False
+            if os.path.exists(index_path_safe):
+                from safetensors.torch import load_file as safe_load_file
+                with open(index_path_safe, "r") as f:
+                    index_data = json.load(f)
+                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k}
+                for shard_file in shard_files:
+                    shard_path = os.path.join(checkpoint_dir, shard_file)
+                    shard_sd = safe_load_file(shard_path)
+                    for k, v in shard_sd.items():
+                        if "weight_clip_val" in k:
+                            state_dict[k] = v
+                loaded = True
+            elif os.path.exists(index_path_bin):
+                with open(index_path_bin, "r") as f:
+                    index_data = json.load(f)
+                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k}
+                for shard_file in shard_files:
+                    shard_path = os.path.join(checkpoint_dir, shard_file)
+                    shard_sd = torch.load(shard_path, map_location="cpu")
+                    for k, v in shard_sd.items():
+                        if "weight_clip_val" in k:
+                            state_dict[k] = v
+                loaded = True
+            else:
+                # Check for single file
+                single_safe = os.path.join(checkpoint_dir, "model.safetensors")
+                single_bin = os.path.join(checkpoint_dir, "pytorch_model.bin")
+                if os.path.exists(single_safe):
+                    from safetensors.torch import load_file as safe_load_file
+                    full_sd = safe_load_file(single_safe)
+                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k}
+                    loaded = True
+                elif os.path.exists(single_bin):
+                    full_sd = torch.load(single_bin, map_location="cpu")
+                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k}
+                    loaded = True
+            
+            if loaded and len(state_dict) > 0:
+                missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+                log.info(f"Loaded {len(state_dict)} weight_clip_val parameters. Missing keys size: {len(missing_keys)}, Unexpected keys size: {len(unexpected_keys)}")
+            elif not loaded:
+                log.warning("Could not find index.json or checkpoint files in input_model_filename to load weight_clip_val!")
+            else:
+                log.warning("No weight_clip_val parameters found in the checkpoint files!")
 
     model.cuda()
     log.info("Complete model loading...")

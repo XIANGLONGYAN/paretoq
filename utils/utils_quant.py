@@ -50,11 +50,26 @@ class LsqBinaryTernaryExtension(torch.autograd.Function):
 
         alpha = torch.where(alpha > eps, alpha, eps)
 
+        # 更改：修正 grad_scale 的计算，在 layerwise = False 时，只用所在行的元素个数
+
+        '''
+        grad_scale = (
+            1.0 / math.sqrt(input.numel())
+            if not Qp
+            else 1.0 / math.sqrt(input.numel() * Qp)
+        ) if layerwise else (
+            1.0 / math.sqrt(input.size(-1))
+            if not Qp
+            else 1.0 / math.sqrt(input.size(-1) * Qp)
+        )
+        '''
         grad_scale = (
             1.0 / math.sqrt(input.numel())
             if not Qp
             else 1.0 / math.sqrt(input.numel() * Qp)
         )
+
+
         ctx.save_for_backward(input, alpha)
         ctx.other = grad_scale, Qn, Qp, layerwise
         ctx.sine_soft_q = sine_soft_q
