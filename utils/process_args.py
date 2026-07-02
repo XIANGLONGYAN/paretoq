@@ -31,6 +31,12 @@ class ModelArguments:
             "help": "#bits to use for quantization; use 16 for evaluating base model. choices=[4, 8, 32]"
         },
     )
+    a_bits: Optional[int] = field(
+        default=16,
+        metadata={
+            "help": "#bits to use for activation quantization; use 16 for full precision."
+        },
+    )
     contain_weight_clip_val: Optional[bool] = field(
         default=False,
         metadata={
@@ -105,9 +111,17 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to enable StableQAT (Fourier surrogate gradient) during QAT."}
     )
-    use_lsq: Optional[bool] = field(
+    use_lsq_weight: Optional[bool] = field(
         default=False,
-        metadata={"help": "Whether to use LSQ (Learned Step Size Quantization) during QAT."}
+        metadata={"help": "Whether to use LSQ for weight quantization during QAT."}
+    )
+    use_lsq_activation: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use LSQ for activation quantization during QAT."}
+    )
+    use_asymmetric_act: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use asymmetric activation quantization."}
     )
 
 

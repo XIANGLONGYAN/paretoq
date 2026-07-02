@@ -21,6 +21,122 @@ def stableqat_surrogate_gradient(v, amplitude):
     grad_x = (1 - pow(2, 0.5) * torch.pi * sum_term) / denom
     return grad_x
 
+class DynamicActivationQuant(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, num_bits, asymmetric=False):
+        if num_bits >= 16:
+            return input
+        
+        dim = -1
+        eps = 1e-5
+        
+        if asymmetric:
+            Qn = 0
+            Qp = 2**num_bits - 1
+            min_val = torch.min(input, dim=dim, keepdim=True)[0]
+            max_val = torch.max(input, dim=dim, keepdim=True)[0]
+            scale = (max_val - min_val).clamp(min=eps) / Qp
+            zp = torch.round(-min_val / scale).clamp(Qn, Qp)
+            
+            q_x = torch.clamp(torch.round(input / scale) + zp, Qn, Qp)
+            x_q = (q_x - zp) * scale
+        else:
+            Qn = -(2 ** (num_bits - 1))
+            Qp = 2 ** (num_bits - 1) - 1
+            max_val = torch.max(torch.abs(input), dim=dim, keepdim=True)[0]
+            scale = max_val.clamp(min=eps) / Qp
+            
+            q_x = torch.clamp(torch.round(input / scale), Qn, Qp)
+            x_q = q_x * scale
+            
+        return x_q
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output, None, None
+
+
+class LsqActivationQuant(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, alpha, num_bits, asymmetric=False):
+        ctx.num_bits = num_bits
+        ctx.asymmetric = asymmetric
+        
+        eps = torch.tensor(0.00001, device=alpha.device).float()
+        alpha = torch.where(alpha > eps, alpha, eps)
+        
+        grad_scale = 1.0 / math.sqrt(input.numel())
+        
+        if asymmetric:
+            # Simple symmetric/asymmetric support for LSQ activation
+            Qn = 0
+            Qp = 2**num_bits - 1
+            min_val = torch.min(input)
+            zp = torch.round(-min_val / alpha).clamp(Qn, Qp)
+            
+            q_x = torch.clamp(torch.round(input / alpha) + zp, Qn, Qp)
+            x_q = (q_x - zp) * alpha
+        else:
+            Qn = -(2 ** (num_bits - 1))
+            Qp = 2 ** (num_bits - 1) - 1
+            q_x = (input / alpha).round().clamp(Qn, Qp)
+            x_q = q_x * alpha
+
+        ctx.save_for_backward(input, alpha)
+        if asymmetric:
+            ctx.other = grad_scale, Qn, Qp, zp
+        else:
+            ctx.other = grad_scale, Qn, Qp, 0
+        return x_q
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input_, alpha = ctx.saved_tensors
+        grad_scale, Qn, Qp, zp = ctx.other
+        
+        q_x = input_ / alpha
+        if ctx.asymmetric:
+            indicate_small = (q_x + zp < Qn).float()
+            indicate_big = (q_x + zp > Qp).float()
+            indicate_middle = 1.0 - indicate_small - indicate_big
+            
+            grad_alpha = (
+                (
+                    indicate_small * Qn
+                    + indicate_big * Qp
+                    + indicate_middle * (-q_x + (q_x + zp).round() - zp)
+                )
+                * grad_output
+                * grad_scale
+            ).sum().unsqueeze(dim=0)
+        else:
+            indicate_small = (q_x < Qn).float()
+            indicate_big = (q_x > Qp).float()
+            indicate_middle = 1.0 - indicate_small - indicate_big
+            
+            grad_alpha = (
+                (
+                    indicate_small * Qn
+                    + indicate_big * Qp
+                    + indicate_middle * (-q_x + q_x.round())
+                )
+                * grad_output
+                * grad_scale
+            ).sum().unsqueeze(dim=0)
+        
+        grad_input = indicate_middle * grad_output
+        return grad_input, grad_alpha, None, None
+
+
+def quantize_activation(input, alpha, num_bits, use_lsq=False, asymmetric=False):
+    if num_bits >= 16:
+        return input
+    if use_lsq:
+        return LsqActivationQuant.apply(input, alpha, num_bits, asymmetric)
+    else:
+        return DynamicActivationQuant.apply(input, num_bits, asymmetric)
+
+
 class LsqBinaryTernaryExtension(torch.autograd.Function):
     """
     Modified from Learned Step-size Quantization.
@@ -50,26 +166,11 @@ class LsqBinaryTernaryExtension(torch.autograd.Function):
 
         alpha = torch.where(alpha > eps, alpha, eps)
 
-        # 更改：修正 grad_scale 的计算，在 layerwise = False 时，只用所在行的元素个数
-
-        '''
-        grad_scale = (
-            1.0 / math.sqrt(input.numel())
-            if not Qp
-            else 1.0 / math.sqrt(input.numel() * Qp)
-        ) if layerwise else (
-            1.0 / math.sqrt(input.size(-1))
-            if not Qp
-            else 1.0 / math.sqrt(input.size(-1) * Qp)
-        )
-        '''
         grad_scale = (
             1.0 / math.sqrt(input.numel())
             if not Qp
             else 1.0 / math.sqrt(input.numel() * Qp)
         )
-
-
         ctx.save_for_backward(input, alpha)
         ctx.other = grad_scale, Qn, Qp, layerwise
         ctx.sine_soft_q = sine_soft_q
@@ -281,15 +382,21 @@ class QuantizeLinear(nn.Linear):
         symmetric=True,
         bias=False,
         w_bits=16,
+        a_bits=16,
         weight_layerwise=False,
         use_stableqat: bool = False,
-        use_lsq: bool = False
+        use_lsq_weight: bool = False,
+        use_lsq_activation: bool = False,
+        use_asymmetric_act: bool = False
     ):
         super(QuantizeLinear, self).__init__(*kargs, bias=bias)
         self.w_bits = w_bits
+        self.a_bits = a_bits
         self.weight_layerwise = weight_layerwise
         self.use_stableqat = use_stableqat
-        self.use_lsq = use_lsq
+        self.use_lsq_weight = use_lsq_weight
+        self.use_lsq_activation = use_lsq_activation
+        self.use_asymmetric_act = use_asymmetric_act
 
         # weight_layerwise 暂时不支持 True，会和 LsqBinaryTernaryExtension 的 alpha 维度冲突
         if self.weight_layerwise:
@@ -303,12 +410,39 @@ class QuantizeLinear(nn.Linear):
             
         # params for weight quant
         if self.w_bits < 16:
-            if self.use_lsq:
+            if self.use_lsq_weight:
                 self.weight_clip_val = nn.Parameter(torch.Tensor(self.weight.shape[0], 1))
             else:
                 self.register_buffer('weight_clip_val', torch.Tensor(self.weight.shape[0], 1))
+                
+        # params for activation quant
+        if self.a_bits < 16:
+            if self.use_lsq_activation:
+                self.act_clip_val = nn.Parameter(torch.ones(1))
+            else:
+                self.register_buffer('act_clip_val', torch.ones(1))
 
     def forward(self, input_):
+        # quantize activation
+        if self.a_bits < 16:
+            if self.use_lsq_activation and (self.act_clip_val.device != input_.device or torch.all(self.act_clip_val == 1.0)):
+                with torch.no_grad():
+                    if self.use_asymmetric_act:
+                        Qp = 2**self.a_bits - 1
+                        val = (input_.max() - input_.min()).clamp(min=1e-5) / Qp
+                    else:
+                        Qp = 2**(self.a_bits - 1) - 1
+                        val = input_.abs().max().clamp(min=1e-5) / Qp
+                    self.act_clip_val.data.fill_(val.item() if hasattr(val, 'item') else val)
+                    
+            input_ = quantize_activation(
+                input_, 
+                self.act_clip_val, 
+                self.a_bits, 
+                use_lsq=self.use_lsq_activation, 
+                asymmetric=self.use_asymmetric_act
+            ).to(input_.dtype)
+
         # quantize weight
         assert len(self.weight.size()) == 2
         real_weights = self.weight
@@ -316,7 +450,7 @@ class QuantizeLinear(nn.Linear):
         if self.w_bits >= 16:
             weight = self.weight
         else:
-            if not self.use_lsq:
+            if not self.use_lsq_weight:
                 with torch.no_grad():
                     if self.w_bits == 2 or self.w_bits == 0:
                         scale, _ = torch.max(torch.abs(real_weights), dim=-1, keepdim=True)
@@ -357,16 +491,29 @@ class QuantizeLinear(nn.Linear):
         return out
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear, w_bits: int, weight_layerwise: bool = False, use_stableqat: bool = False, use_lsq: bool = False):
+    def from_linear(
+        cls, 
+        linear: nn.Linear, 
+        w_bits: int, 
+        a_bits: int = 16, 
+        weight_layerwise: bool = False, 
+        use_stableqat: bool = False, 
+        use_lsq_weight: bool = False, 
+        use_lsq_activation: bool = False, 
+        use_asymmetric_act: bool = False
+    ):
         """从现有 nn.Linear 创建 QuantizeLinear，复制权重"""
         quant_linear = cls(
             linear.in_features,
             linear.out_features,
             bias=linear.bias is not None,
             w_bits=w_bits,
+            a_bits=a_bits,
             weight_layerwise=weight_layerwise,
             use_stableqat=use_stableqat,
-            use_lsq=use_lsq,
+            use_lsq_weight=use_lsq_weight,
+            use_lsq_activation=use_lsq_activation,
+            use_asymmetric_act=use_asymmetric_act,
         )
         # 复制权重（共享参数以节省内存）
         quant_linear.weight = linear.weight
@@ -377,23 +524,29 @@ class QuantizeLinear(nn.Linear):
 def replace_linear_with_quantized(
     model: nn.Module,
     w_bits: int,
+    a_bits: int = 16,
     weight_layerwise: bool = False,
     skip_keywords: list = None,
     use_stableqat: bool = False,
-    use_lsq: bool = False,
+    use_lsq_weight: bool = False,
+    use_lsq_activation: bool = False,
+    use_asymmetric_act: bool = False,
 ):
     """
     递归遍历模型，将 nn.Linear 替换为 QuantizeLinear。
     
     Args:
         model: HuggingFace 模型
-        w_bits: 量化位数，>=16 时不替换（保持原始精度）
+        w_bits: 权重量化位数，>=16 时不替换（保持原始精度）
+        a_bits: 激活量化位数，>=16 时不量化激活值
         weight_layerwise: 是否按行量化
         skip_keywords: 不量化的层名关键词列表，如 ["lm_head", "embed"]
         use_stableqat: 是否启用 StableQAT
-        use_lsq: 是否启用 LSQ
+        use_lsq_weight: 是否对权重启用 LSQ
+        use_lsq_activation: 是否对激活启用 LSQ
+        use_asymmetric_act: 是否使用非对称激活值量化
     """
-    if w_bits >= 16:
+    if w_bits >= 16 and a_bits >= 16:
         # 不量化，直接返回
         return model
     
@@ -410,11 +563,20 @@ def replace_linear_with_quantized(
     
     # 执行替换
     for name, module in replace_list:
-        quant_linear = QuantizeLinear.from_linear(module, w_bits=w_bits, weight_layerwise=weight_layerwise, use_stableqat=use_stableqat, use_lsq=use_lsq)
+        quant_linear = QuantizeLinear.from_linear(
+            module, 
+            w_bits=w_bits, 
+            a_bits=a_bits, 
+            weight_layerwise=weight_layerwise, 
+            use_stableqat=use_stableqat, 
+            use_lsq_weight=use_lsq_weight, 
+            use_lsq_activation=use_lsq_activation, 
+            use_asymmetric_act=use_asymmetric_act
+        )
         # 递归 setattr
         _set_module_by_name(model, name, quant_linear)
     
-    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits}, use_stableqat={use_stableqat}, use_lsq={use_lsq})")
+    print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits}, a_bits={a_bits}, use_stableqat={use_stableqat}, use_lsq_weight={use_lsq_weight}, use_lsq_activation={use_lsq_activation})")
     return model
 
 

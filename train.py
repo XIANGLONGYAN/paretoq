@@ -84,18 +84,21 @@ def train():
         device_map='cpu',
     )
 
-    if training_args.qat and model_args.w_bits < 16:
+    if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
         model = replace_linear_with_quantized(
             model,
             w_bits=model_args.w_bits,
+            a_bits=model_args.a_bits,
             weight_layerwise=False,
             skip_keywords=["lm_head", "embed"],
             use_stableqat=training_args.use_stableqat,
-            use_lsq=training_args.use_lsq,
+            use_lsq_weight=training_args.use_lsq_weight,
+            use_lsq_activation=training_args.use_lsq_activation,
+            use_asymmetric_act=training_args.use_asymmetric_act,
         )
         if not model_args.contain_weight_clip_val:
             for name, module in model.named_modules():
-                if isinstance(module, QuantizeLinear):
+                if isinstance(module, QuantizeLinear) and model_args.w_bits < 16:
                     weight_param = module.weight
                     if model_args.w_bits == 1:
                         scale = torch.mean(weight_param.abs(), dim=-1, keepdim=True).detach()
@@ -110,7 +113,7 @@ def train():
 
                     module.weight_clip_val.data.copy_(scale)
         else:
-            log.info("Loading saved quantized parameters (weight_clip_val) from checkpoint...")
+            log.info("Loading saved quantized parameters (weight_clip_val/act_clip_val) from checkpoint...")
             import os
             import json
             state_dict = {}
@@ -124,23 +127,23 @@ def train():
                 from safetensors.torch import load_file as safe_load_file
                 with open(index_path_safe, "r") as f:
                     index_data = json.load(f)
-                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k}
+                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k or "act_clip_val" in k}
                 for shard_file in shard_files:
                     shard_path = os.path.join(checkpoint_dir, shard_file)
                     shard_sd = safe_load_file(shard_path)
                     for k, v in shard_sd.items():
-                        if "weight_clip_val" in k:
+                        if "weight_clip_val" in k or "act_clip_val" in k:
                             state_dict[k] = v
                 loaded = True
             elif os.path.exists(index_path_bin):
                 with open(index_path_bin, "r") as f:
                     index_data = json.load(f)
-                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k}
+                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k or "act_clip_val" in k}
                 for shard_file in shard_files:
                     shard_path = os.path.join(checkpoint_dir, shard_file)
                     shard_sd = torch.load(shard_path, map_location="cpu")
                     for k, v in shard_sd.items():
-                        if "weight_clip_val" in k:
+                        if "weight_clip_val" in k or "act_clip_val" in k:
                             state_dict[k] = v
                 loaded = True
             else:
@@ -150,20 +153,20 @@ def train():
                 if os.path.exists(single_safe):
                     from safetensors.torch import load_file as safe_load_file
                     full_sd = safe_load_file(single_safe)
-                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k}
+                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k or "act_clip_val" in k}
                     loaded = True
                 elif os.path.exists(single_bin):
                     full_sd = torch.load(single_bin, map_location="cpu")
-                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k}
+                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k or "act_clip_val" in k}
                     loaded = True
             
             if loaded and len(state_dict) > 0:
                 missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-                log.info(f"Loaded {len(state_dict)} weight_clip_val parameters. Missing keys size: {len(missing_keys)}, Unexpected keys size: {len(unexpected_keys)}")
+                log.info(f"Loaded {len(state_dict)} weight_clip_val/act_clip_val parameters. Missing keys size: {len(missing_keys)}, Unexpected keys size: {len(unexpected_keys)}")
             elif not loaded:
-                log.warning("Could not find index.json or checkpoint files in input_model_filename to load weight_clip_val!")
+                log.warning("Could not find index.json or checkpoint files in input_model_filename to load weight_clip_val/act_clip_val!")
             else:
-                log.warning("No weight_clip_val parameters found in the checkpoint files!")
+                log.warning("No weight_clip_val/act_clip_val parameters found in the checkpoint files!")
 
     model.cuda()
     log.info("Complete model loading...")
