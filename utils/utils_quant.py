@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import math
-
 import torch
 import torch.nn as nn
 
@@ -21,7 +20,12 @@ def stableqat_surrogate_gradient(v, amplitude):
     grad_x = (1 - pow(2, 0.5) * torch.pi * sum_term) / denom
     return grad_x
 
+
 class DynamicActivationQuant(torch.autograd.Function):
+    """
+    动态自适应激活值量化算子 (Token-wise)
+    在前向中基于 Token 的实际极值计算 scale 并在整数空间进行 rounding
+    """
     @staticmethod
     def forward(ctx, input, num_bits, asymmetric=False):
         if num_bits >= 16:
@@ -57,6 +61,10 @@ class DynamicActivationQuant(torch.autograd.Function):
 
 
 class LsqActivationQuant(torch.autograd.Function):
+    """
+    学习型激活值量化算子 (LSQ Activation)
+    基于优化器梯度的自适应 step-size 量化
+    """
     @staticmethod
     def forward(ctx, input, alpha, num_bits, asymmetric=False):
         ctx.num_bits = num_bits
@@ -126,15 +134,6 @@ class LsqActivationQuant(torch.autograd.Function):
         
         grad_input = indicate_middle * grad_output
         return grad_input, grad_alpha, None, None
-
-
-def quantize_activation(input, alpha, num_bits, use_lsq=False, asymmetric=False):
-    if num_bits >= 16:
-        return input
-    if use_lsq:
-        return LsqActivationQuant.apply(input, alpha, num_bits, asymmetric)
-    else:
-        return DynamicActivationQuant.apply(input, num_bits, asymmetric)
 
 
 class LsqBinaryTernaryExtension(torch.autograd.Function):
@@ -374,6 +373,103 @@ class StretchedElasticQuant(torch.autograd.Function):
         return grad_input, grad_alpha, None, None
 
 
+def _quantize_activation_kernel(input, alpha, num_bits, use_lsq=False, asymmetric=False):
+    if num_bits >= 16:
+        return input
+    if use_lsq:
+        return LsqActivationQuant.apply(input, alpha, num_bits, asymmetric)
+    else:
+        return DynamicActivationQuant.apply(input, num_bits, asymmetric)
+
+
+def quantize_activation(
+    input_, 
+    act_clip_val, 
+    a_bits, 
+    use_lsq_activation=False, 
+    use_asymmetric_act=False,
+    dtype=torch.float32
+):
+    """
+    高阶激活量化管理函数
+    负责在首个前向传播时进行 LSQ 自适应初始化，并路由调用相应量化算子
+    """
+    if a_bits >= 16:
+        return input_
+
+    # Self-initialization for LSQ act_clip_val in first forward pass
+    if use_lsq_activation and (act_clip_val.device != input_.device or torch.all(act_clip_val == 1.0)):
+        with torch.no_grad():
+            if use_asymmetric_act:
+                Qp = 2**a_bits - 1
+                val = (input_.max() - input_.min()).clamp(min=1e-5) / Qp
+            else:
+                Qp = 2**(a_bits - 1) - 1
+                val = input_.abs().max().clamp(min=1e-5) / Qp
+            act_clip_val.data.fill_(val.item() if hasattr(val, 'item') else val)
+
+    return _quantize_activation_kernel(
+        input_, 
+        act_clip_val, 
+        a_bits, 
+        use_lsq=use_lsq_activation, 
+        asymmetric=use_asymmetric_act
+    ).to(dtype)
+
+
+def quantize_weight(
+    weight,
+    weight_clip_val,
+    w_bits,
+    weight_layerwise=False,
+    use_lsq_weight=False,
+    use_stableqat=False,
+    sine_amplitude=None,
+    dtype=torch.float32
+):
+    """
+    高阶权重量化管理函数
+    负责在非 LSQ 下的动态 Max 尺度计算，并路由调用 StretchedElastic 或 Lsq 算子
+    """
+    if w_bits >= 16:
+        return weight
+
+    if not use_lsq_weight:
+        with torch.no_grad():
+            if w_bits == 2 or w_bits == 0:
+                scale, _ = torch.max(torch.abs(weight), dim=-1, keepdim=True)
+            elif w_bits <= 4:
+                xmax, _ = torch.max(torch.abs(weight), dim=-1, keepdim=True)
+                maxq = 2 ** (w_bits - 1) - 1
+                scale = xmax / maxq
+            else:
+                raise NotImplementedError
+            weight_clip_val.copy_(scale)
+
+    if w_bits == 2 or w_bits == 0:
+        q_weight = StretchedElasticQuant.apply(
+            weight,
+            weight_clip_val,
+            w_bits,
+            weight_layerwise,
+        ).to(dtype)
+    elif w_bits <= 4:
+        sine_soft_q = {
+            'enable': use_stableqat,
+            'amplitude': sine_amplitude if use_stableqat else None
+        }
+        q_weight = LsqBinaryTernaryExtension.apply(
+            weight,
+            weight_clip_val,
+            w_bits,
+            weight_layerwise,
+            sine_soft_q,
+        ).to(dtype)
+    else:
+        raise NotImplementedError
+
+    return q_weight
+
 
 class QuantizeLinear(nn.Linear):
     def __init__(
@@ -423,68 +519,36 @@ class QuantizeLinear(nn.Linear):
                 self.register_buffer('act_clip_val', torch.ones(1))
 
     def forward(self, input_):
-        # quantize activation
+        # 1. 量化激活值
         if self.a_bits < 16:
-            if self.use_lsq_activation and (self.act_clip_val.device != input_.device or torch.all(self.act_clip_val == 1.0)):
-                with torch.no_grad():
-                    if self.use_asymmetric_act:
-                        Qp = 2**self.a_bits - 1
-                        val = (input_.max() - input_.min()).clamp(min=1e-5) / Qp
-                    else:
-                        Qp = 2**(self.a_bits - 1) - 1
-                        val = input_.abs().max().clamp(min=1e-5) / Qp
-                    self.act_clip_val.data.fill_(val.item() if hasattr(val, 'item') else val)
-                    
-            input_ = quantize_activation(
+            input_q = quantize_activation(
                 input_, 
                 self.act_clip_val, 
                 self.a_bits, 
-                use_lsq=self.use_lsq_activation, 
-                asymmetric=self.use_asymmetric_act
-            ).to(input_.dtype)
-
-        # quantize weight
-        assert len(self.weight.size()) == 2
-        real_weights = self.weight
-
-        if self.w_bits >= 16:
-            weight = self.weight
+                use_lsq_activation=self.use_lsq_activation, 
+                use_asymmetric_act=self.use_asymmetric_act,
+                dtype=input_.dtype
+            )
         else:
-            if not self.use_lsq_weight:
-                with torch.no_grad():
-                    if self.w_bits == 2 or self.w_bits == 0:
-                        scale, _ = torch.max(torch.abs(real_weights), dim=-1, keepdim=True)
-                    elif self.w_bits <= 4:
-                        xmax, _ = torch.max(torch.abs(real_weights), dim=-1, keepdim=True)
-                        maxq = 2 ** (self.w_bits - 1) - 1
-                        scale = xmax / maxq
-                    else:
-                        raise NotImplementedError
-                    self.weight_clip_val.copy_(scale)
+            input_q = input_
 
-            if self.w_bits == 2 or self.w_bits == 0:
-                weight = StretchedElasticQuant.apply(
-                    real_weights,
-                    self.weight_clip_val,
-                    self.w_bits,
-                    self.weight_layerwise,
-                ).to(input_.dtype)
-            elif self.w_bits <= 4:
-                sine_soft_q = {
-                    'enable': self.use_stableqat,
-                    'amplitude': self.sine_amplitude if self.use_stableqat else None
-                }
-                weight = LsqBinaryTernaryExtension.apply(
-                    real_weights,
-                    self.weight_clip_val,
-                    self.w_bits,
-                    self.weight_layerwise,
-                    sine_soft_q,
-                ).to(input_.dtype)
-            else:
-                raise NotImplementedError
+        # 2. 量化权重
+        if self.w_bits < 16:
+            weight_q = quantize_weight(
+                self.weight,
+                self.weight_clip_val,
+                self.w_bits,
+                weight_layerwise=self.weight_layerwise,
+                use_lsq_weight=self.use_lsq_weight,
+                use_stableqat=self.use_stableqat,
+                sine_amplitude=self.sine_amplitude,
+                dtype=input_.dtype
+            )
+        else:
+            weight_q = self.weight
 
-        out = nn.functional.linear(input_, weight)
+        # 3. 线性计算
+        out = nn.functional.linear(input_q, weight_q)
         if self.bias is not None:
             out += self.bias.view(1, -1).expand_as(out)
 
@@ -520,7 +584,7 @@ class QuantizeLinear(nn.Linear):
         if linear.bias is not None:
             quant_linear.bias = linear.bias
         return quant_linear
-    
+
 def replace_linear_with_quantized(
     model: nn.Module,
     w_bits: int,
