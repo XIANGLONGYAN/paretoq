@@ -156,7 +156,7 @@ def train():
             index_path_safe = os.path.join(checkpoint_dir, "model.safetensors.index.json")
             index_path_bin = os.path.join(checkpoint_dir, "pytorch_model.bin.index.json")
 
-            dsq_kws = ["weight_clip_val", "act_clip_val", "weight_clip_l", "weight_clip_u", "act_clip_l", "act_clip_u", "weight_dsq_alpha", "act_dsq_alpha"]
+            dsq_kws = ["weight_clip_val", "act_clip_val", "weight_clip_l", "weight_clip_u", "weight_dsq_alpha", "act_dsq_alpha"]
             def is_quant_param(k):
                 return any(kw in k for kw in dsq_kws)
 

@@ -441,12 +441,15 @@ class DsqQuant(torch.autograd.Function):
         d_Qs_d_x = (Delta / 2.0) * s * k * (1.0 - tanh_val ** 2)
         grad_input = grad_output * d_Qs_d_x * mask_mid
         
-        # Helper function to reduce gradients across dimensions (supporting rowwise/scalar boundaries)
+        # Helper function to reduce gradients across dimensions (supporting rowwise/scalar/per-token boundaries)
         def reduce_grad(grad_val, target_param):
             if target_param.numel() == 1:
                 return grad_val.sum().view_as(target_param)
             else:
-                dims = list(range(1, grad_val.ndim))
+                # Reduce over dimensions beyond target_param's last dim
+                # e.g. target (out,1) ndim=2, grad (out,in) ndim=2 → reduce dim=[1]
+                # e.g. target (b,s,1) ndim=3, grad (b,s,h) ndim=3 → reduce dim=[2]
+                dims = list(range(target_param.ndim - 1, grad_val.ndim))
                 return grad_val.sum(dim=dims, keepdim=True).view_as(target_param)
         
         # 2. Gradient w.r.t alpha
@@ -489,8 +492,6 @@ def quantize_activation(
     use_asymmetric_act=False,
     use_dsq_activation=False,
     act_dsq_alpha=None,
-    act_clip_l=None,
-    act_clip_u=None,
     dtype=torch.float32
 ):
     """
@@ -501,18 +502,14 @@ def quantize_activation(
         return input_
 
     if use_dsq_activation:
-        # Self-initialization for DSQ act_clip_l/u on first forward pass
-        if act_clip_l is not None and act_clip_u is not None:
-            if act_clip_l.device != input_.device or (torch.all(act_clip_l == -1.0) and torch.all(act_clip_u == 1.0)):
-                with torch.no_grad():
-                    min_val = input_.min().detach()
-                    max_val = input_.max().detach()
-                    if max_val - min_val < 1e-5:
-                        min_val = min_val - 1e-3
-                        max_val = max_val + 1e-3
-                    act_clip_l.data.fill_(min_val.item())
-                    act_clip_u.data.fill_(max_val.item())
-        return DsqQuant.apply(input_, act_dsq_alpha, act_clip_l, act_clip_u, a_bits).to(dtype)
+        # Per-token dynamic range (matching DynamicActivationQuant granularity)
+        with torch.no_grad():
+            l = input_.min(dim=-1, keepdim=True)[0]
+            u = input_.max(dim=-1, keepdim=True)[0]
+            margin = (u - l).clamp(min=1e-5) * 0.01
+            l = l - margin
+            u = u + margin
+        return DsqQuant.apply(input_, act_dsq_alpha, l, u, a_bits).to(dtype)
 
     # Self-initialization for LSQ act_clip_val in first forward pass
     if use_lsq_activation and (act_clip_val.device != input_.device or torch.all(act_clip_val == 1.0)):
@@ -648,8 +645,6 @@ class QuantizeLinear(nn.Linear):
         # params for activation quant
         if self.a_bits < 16:
             if self.use_dsq_activation:
-                self.act_clip_l = nn.Parameter(torch.tensor([-1.0]))
-                self.act_clip_u = nn.Parameter(torch.tensor([1.0]))
                 self.act_dsq_alpha = nn.Parameter(torch.tensor([dsq_init_alpha]))
             elif self.use_lsq_activation:
                 self.act_clip_val = nn.Parameter(torch.ones(1))
@@ -667,8 +662,6 @@ class QuantizeLinear(nn.Linear):
                 use_asymmetric_act=self.use_asymmetric_act,
                 use_dsq_activation=self.use_dsq_activation,
                 act_dsq_alpha=self.act_dsq_alpha if self.use_dsq_activation else None,
-                act_clip_l=self.act_clip_l if self.use_dsq_activation else None,
-                act_clip_u=self.act_clip_u if self.use_dsq_activation else None,
                 dtype=input_.dtype
             )
         else:
