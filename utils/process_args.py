@@ -123,6 +123,22 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to use asymmetric activation quantization."}
     )
+    use_dsq_weight: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use DSQ (Differentiable Soft Quantization) for weight quantization during QAT."}
+    )
+    use_dsq_activation: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use DSQ (Differentiable Soft Quantization) for activation quantization during QAT."}
+    )
+    dsq_init_alpha: Optional[float] = field(
+        default=0.2,
+        metadata={"help": "Initial value of similarity factor alpha for DSQ."}
+    )
+    dsq_alpha_lambda: Optional[float] = field(
+        default=1e-4,
+        metadata={"help": "Regularization coefficient lambda for DSQ alpha parameters."}
+    )
 
 
 def process_args():

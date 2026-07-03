@@ -30,11 +30,13 @@ class MuonTrainer(Trainer):
         # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head, not weight_clip_val)
         hidden_matrix_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n # and "weight_clip_val" not in n
+            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n 
+            # and "clip_val" not in n and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
         ]
         other_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim < 2 or "embed" in n or "lm_head" in n # or "weight_clip_val" in n
+            if p.ndim < 2 or "embed" in n or "lm_head" in n 
+            # or "clip_val" in n or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
         ]
 
         muon_lr = (
@@ -68,6 +70,31 @@ class MuonTrainer(Trainer):
 
         return self.optimizer
 
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        if return_outputs:
+            loss, outputs = super().compute_loss(model, inputs, return_outputs=True, **kwargs)
+        else:
+            loss = super().compute_loss(model, inputs, return_outputs=False, **kwargs)
+            outputs = None
+
+        # 前置显式检查：如果未启用权重或激活值的 DSQ，直接返回原版 Loss，避免多余计算
+        use_dsq_w = getattr(self.args, "use_dsq_weight", False)
+        use_dsq_a = getattr(self.args, "use_dsq_activation", False)
+        if not (use_dsq_w or use_dsq_a):
+            return (loss, outputs) if return_outputs else loss
+
+        dsq_reg = 0.0
+        dsq_alpha_lambda = getattr(self.args, "dsq_alpha_lambda", 1e-4)
+        has_dsq = False
+        for name, param in model.named_parameters():
+            if "dsq_alpha" in name:
+                dsq_reg += torch.sum(param ** 2)
+                has_dsq = True
+        
+        if has_dsq:
+            loss = loss + dsq_alpha_lambda * dsq_reg
+            
+        return (loss, outputs) if return_outputs else loss
 
 def train():
     dist.init_process_group(backend="nccl")
@@ -95,6 +122,9 @@ def train():
             use_lsq_weight=training_args.use_lsq_weight,
             use_lsq_activation=training_args.use_lsq_activation,
             use_asymmetric_act=training_args.use_asymmetric_act,
+            use_dsq_weight=training_args.use_dsq_weight,
+            use_dsq_activation=training_args.use_dsq_activation,
+            dsq_init_alpha=training_args.dsq_init_alpha,
         )
         if not model_args.contain_weight_clip_val:
             for name, module in model.named_modules():
@@ -111,9 +141,13 @@ def train():
                     else:
                         raise NotImplementedError
 
-                    module.weight_clip_val.data.copy_(scale)
+                    if getattr(module, 'use_dsq_weight', False):
+                        module.weight_clip_l.data.copy_(-scale)
+                        module.weight_clip_u.data.copy_(scale)
+                    else:
+                        module.weight_clip_val.data.copy_(scale)
         else:
-            log.info("Loading saved quantized parameters (weight_clip_val/act_clip_val) from checkpoint...")
+            log.info("Loading saved quantized parameters from checkpoint...")
             import os
             import json
             state_dict = {}
@@ -121,29 +155,33 @@ def train():
             
             index_path_safe = os.path.join(checkpoint_dir, "model.safetensors.index.json")
             index_path_bin = os.path.join(checkpoint_dir, "pytorch_model.bin.index.json")
-            
+
+            dsq_kws = ["weight_clip_val", "act_clip_val", "weight_clip_l", "weight_clip_u", "act_clip_l", "act_clip_u", "weight_dsq_alpha", "act_dsq_alpha"]
+            def is_quant_param(k):
+                return any(kw in k for kw in dsq_kws)
+
             loaded = False
             if os.path.exists(index_path_safe):
                 from safetensors.torch import load_file as safe_load_file
                 with open(index_path_safe, "r") as f:
                     index_data = json.load(f)
-                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k or "act_clip_val" in k}
+                shard_files = {v for k, v in index_data["weight_map"].items() if is_quant_param(k)}
                 for shard_file in shard_files:
                     shard_path = os.path.join(checkpoint_dir, shard_file)
                     shard_sd = safe_load_file(shard_path)
                     for k, v in shard_sd.items():
-                        if "weight_clip_val" in k or "act_clip_val" in k:
+                        if is_quant_param(k):
                             state_dict[k] = v
                 loaded = True
             elif os.path.exists(index_path_bin):
                 with open(index_path_bin, "r") as f:
                     index_data = json.load(f)
-                shard_files = {v for k, v in index_data["weight_map"].items() if "weight_clip_val" in k or "act_clip_val" in k}
+                shard_files = {v for k, v in index_data["weight_map"].items() if is_quant_param(k)}
                 for shard_file in shard_files:
                     shard_path = os.path.join(checkpoint_dir, shard_file)
                     shard_sd = torch.load(shard_path, map_location="cpu")
                     for k, v in shard_sd.items():
-                        if "weight_clip_val" in k or "act_clip_val" in k:
+                        if is_quant_param(k):
                             state_dict[k] = v
                 loaded = True
             else:
@@ -153,20 +191,20 @@ def train():
                 if os.path.exists(single_safe):
                     from safetensors.torch import load_file as safe_load_file
                     full_sd = safe_load_file(single_safe)
-                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k or "act_clip_val" in k}
+                    state_dict = {k: v for k, v in full_sd.items() if is_quant_param(k)}
                     loaded = True
                 elif os.path.exists(single_bin):
                     full_sd = torch.load(single_bin, map_location="cpu")
-                    state_dict = {k: v for k, v in full_sd.items() if "weight_clip_val" in k or "act_clip_val" in k}
+                    state_dict = {k: v for k, v in full_sd.items() if is_quant_param(k)}
                     loaded = True
             
             if loaded and len(state_dict) > 0:
                 missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-                log.info(f"Loaded {len(state_dict)} weight_clip_val/act_clip_val parameters. Missing keys size: {len(missing_keys)}, Unexpected keys size: {len(unexpected_keys)}")
+                log.info(f"Loaded {len(state_dict)} quantization parameters. Missing keys size: {len(missing_keys)}, Unexpected keys size: {len(unexpected_keys)}")
             elif not loaded:
-                log.warning("Could not find index.json or checkpoint files in input_model_filename to load weight_clip_val/act_clip_val!")
+                log.warning("Could not find index.json or checkpoint files in input_model_filename to load quantization parameters!")
             else:
-                log.warning("No weight_clip_val/act_clip_val parameters found in the checkpoint files!")
+                log.warning("No quantization parameters found in the checkpoint files!")
 
     model.cuda()
     log.info("Complete model loading...")
