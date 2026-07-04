@@ -31,12 +31,14 @@ class MuonTrainer(Trainer):
         hidden_matrix_params = [
             p for n, p in self.model.named_parameters() 
             if p.ndim >= 2 and "embed" not in n and "lm_head" not in n 
-            # and "clip_val" not in n and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
+            # and "clip_val" not in n 
+            and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
         ]
         other_params = [
             p for n, p in self.model.named_parameters() 
             if p.ndim < 2 or "embed" in n or "lm_head" in n 
-            # or "clip_val" in n or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
+            # or "clip_val" in n 
+            or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
         ]
 
         muon_lr = (
@@ -142,10 +144,10 @@ def train():
                         raise NotImplementedError
 
                     if getattr(module, 'use_dsq_weight', False):
-                        module.weight_clip_l.data.copy_(-scale)
-                        module.weight_clip_u.data.copy_(scale)
+                        module.weight_clip_l.data.copy_(-xmax)
+                        module.weight_clip_u.data.copy_(xmax)
                     else:
-                        module.weight_clip_val.data.copy_(scale)
+                        module.weight_clip_val.data.copy_(xmax)
         else:
             log.info("Loading saved quantized parameters from checkpoint...")
             import os
