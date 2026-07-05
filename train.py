@@ -31,13 +31,13 @@ class MuonTrainer(Trainer):
         hidden_matrix_params = [
             p for n, p in self.model.named_parameters() 
             if p.ndim >= 2 and "embed" not in n and "lm_head" not in n 
-            # and "clip_val" not in n 
+            # and "clip_val" not in n
             and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
         ]
         other_params = [
             p for n, p in self.model.named_parameters() 
             if p.ndim < 2 or "embed" in n or "lm_head" in n 
-            # or "clip_val" in n 
+            # or "clip_val" in n
             or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
         ]
 
@@ -98,6 +98,7 @@ class MuonTrainer(Trainer):
             
         return (loss, outputs) if return_outputs else loss
 
+
 def train():
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args, eval_args = process_args()
@@ -127,6 +128,11 @@ def train():
             use_dsq_weight=training_args.use_dsq_weight,
             use_dsq_activation=training_args.use_dsq_activation,
             dsq_init_alpha=training_args.dsq_init_alpha,
+            use_daq_weight=training_args.use_daq_weight,
+            use_daq_activation=training_args.use_daq_activation,
+            daq_gamma=training_args.daq_gamma,
+            daq_sigma_k_weight=training_args.daq_sigma_k_weight,
+            daq_sigma_k_act=training_args.daq_sigma_k_act,
         )
         if not model_args.contain_weight_clip_val:
             for name, module in model.named_modules():
@@ -143,7 +149,7 @@ def train():
                     else:
                         raise NotImplementedError
 
-                    if getattr(module, 'use_dsq_weight', False):
+                    if getattr(module, 'use_dsq_weight', False) or getattr(module, 'use_daq_weight', False):
                         module.weight_clip_l.data.copy_(-xmax)
                         module.weight_clip_u.data.copy_(xmax)
                     else:

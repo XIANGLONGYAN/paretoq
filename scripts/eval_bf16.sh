@@ -1,16 +1,16 @@
-CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29505 train.py \
---local_dir "/tmp/llama/" \
---input_model_filename "/jizhicfs/jackxlyan/pretrained/llama3.2/llama-3.2-1B" \
+CUDA_VISIBLE_DEVICES=4 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29505 train.py \
+--local_dir "/home/jiaqichen/data2/paretoq" \
+--input_model_filename "meta-llama/Llama-3.2-1B" \
 --output_model_filename "1B-bf16-baseline" \
---train_data_local_path "/jizhicfs/jackxlyan/dataset/paretoq_data/wikitext_wikitext-2-raw-v1_train.jsonl" \
---eval_data_local_path "/jizhicfs/jackxlyan/dataset/paretoq_data/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--train_data_local_path "/home/jiaqichen/data2/dataset/wikitext_wikitext-2-raw-v1_train.jsonl" \
+--eval_data_local_path "/home/jiaqichen/data2/dataset/wikitext_wikitext-2-raw-v1_test.jsonl" \
 --do_train False \
 --do_eval False \
 --model_max_length 2048 \
 --fp16 False \
 --bf16 True \
 --log_on_each_node False \
---logging_dir /tmp/output/runs/bf16_eval \
+--logging_dir /home/jiaqichen/data2/paretoq/runs/bf16_eval \
 --num_train_epochs 1 \
 --per_device_train_batch_size 8 \
 --per_device_eval_batch_size 1 \

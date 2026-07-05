@@ -139,6 +139,26 @@ class TrainingArguments(transformers.TrainingArguments):
         default=1e-4,
         metadata={"help": "Regularization coefficient lambda for DSQ alpha parameters."}
     )
+    use_daq_weight: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use DAQ (Distance-aware Quantization) for weight quantization during QAT."}
+    )
+    use_daq_activation: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use DAQ (Distance-aware Quantization) for activation quantization during QAT."}
+    )
+    daq_gamma: Optional[float] = field(
+        default=2.0,
+        metadata={"help": "Gamma parameter for DAQ (dynamic temperature control strength)."}
+    )
+    daq_sigma_k_weight: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Sigma_k parameter (Gaussian kernel std) for weight in DAQ."}
+    )
+    daq_sigma_k_act: Optional[float] = field(
+        default=2.0,
+        metadata={"help": "Sigma_k parameter (Gaussian kernel std) for activation in DAQ."}
+    )
 
 
 def process_args():
