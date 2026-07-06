@@ -134,6 +134,7 @@ class CustomJsonDataset(torch.utils.data.Dataset):
                 # Append the value to the list associated with the key in dict_of_lists
                 concatenated_examples[key].extend(d[key])
         total_length = len(concatenated_examples["input_ids"])
+        print(f'The dataset has {total_length} tokens.')
         # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
         # customize this part to your needs.
         if total_length >= self.block_size:

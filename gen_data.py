@@ -108,8 +108,12 @@ def main():
         filename = filename.replace("/", "_")
         output_path = os.path.join(args.output_dir, filename)
         print(f"Loading {split} split...")
-        ds = load_dataset(args.dataset_name, args.dataset_config, split=split)
-        count = generate_jsonl(ds, output_path, args.min_length, args.text_key, args.max_samples, trust_remote_code=True)
+        ds = load_dataset(
+            args.dataset_name, args.dataset_config, split=split, trust_remote_code=True
+        )
+        count = generate_jsonl(
+            ds, output_path, args.min_length, args.text_key, args.max_samples
+        )
         print(f"  -> Saved {count} samples to {output_path}")
 
     print("-" * 50)

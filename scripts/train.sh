@@ -1,26 +1,15 @@
 CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29518 train.py \
 --w_bits 4 \
 --a_bits 4 \
---use_lsq_weight False \
---use_lsq_activation False \
 --use_asymmetric_act True \
---use_stableqat False \
---use_dsq_weight False \
---use_dsq_activation False \
---dsq_init_alpha 0.2 \
---dsq_alpha_lambda 1e-4 \
---use_daq_weight True \
---use_daq_activation True \
---daq_gamma 2.0 \
---daq_sigma_k_weight 1.0 \
---daq_sigma_k_act 2.0 \
 --local_dir "/home/jiaqichen/data2/paretoq" \
 --input_model_filename "meta-llama/Llama-3.2-1B" \
 --output_model_filename "1B-finetuned-4bit" \
---train_data_local_path "/home/jiaqichen/data2/dataset/wikitext_wikitext-2-raw-v1_train.jsonl" \
---eval_data_local_path "/home/jiaqichen/data2/dataset/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--train_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_train.jsonl" \
+--eval_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
 --do_train True \
 --do_eval False \
+--evaluation_strategy "no" \
 --use_muon True \
 --learning_rate 1e-5 \
 --muon_learning_rate 5e-4 \
@@ -34,7 +23,6 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 1 \
 --gradient_accumulation_steps 1 \
---evaluation_strategy "no" \
 --save_strategy "steps" \
 --save_steps 2000 \
 --report_to "wandb" \
@@ -53,3 +41,15 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --eval_lm_eval \
 --tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
 --eval_batch_size 64
+--use_lsq_weight False \
+--use_lsq_activation False \
+--use_stableqat False \
+--use_dsq_weight False \
+--use_dsq_activation False \
+--dsq_init_alpha 0.2 \
+--dsq_alpha_lambda 1e-4 \
+--use_daq_weight True \
+--use_daq_activation True \
+--daq_gamma 2.0 \
+--daq_sigma_k_weight 1.0 \
+--daq_sigma_k_act 2.0
