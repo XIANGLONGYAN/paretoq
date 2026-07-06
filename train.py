@@ -36,7 +36,7 @@ class MuonTrainer(Trainer):
         ]
         other_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim < 2 or "embed" in n or "lm_head" in n 
+            if p.ndim < 2
             # or "clip_val" in n
             or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
         ]
@@ -153,7 +153,8 @@ def train():
                         module.weight_clip_l.data.copy_(-xmax)
                         module.weight_clip_u.data.copy_(xmax)
                     else:
-                        module.weight_clip_val.data.copy_(xmax)
+                        # weight_clip_val will passed as alpha(quantization step size), so it should be initialized to scale
+                        module.weight_clip_val.data.copy_(scale)
         else:
             log.info("Loading saved quantized parameters from checkpoint...")
             import os
