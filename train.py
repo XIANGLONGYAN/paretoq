@@ -242,7 +242,8 @@ def train():
         if data_args.eval_data_local_path is not None
         else None,
         cache_dir=cache_dir,
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        max_train_tokens=data_args.max_train_tokens
     )
 
     train_data = datautils.CustomBinDataset(

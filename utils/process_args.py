@@ -66,6 +66,9 @@ class DataArguments:
     eval_data_local_path: Optional[str] = field(
         default=None, metadata={"help": "Eval data local path"}
     )
+    max_train_tokens: Optional[int] = field(
+        default=None, metadata={"help": "Max training tokens to preprocess/train on"}
+    )
 
 @dataclass
 class EvalArguments:

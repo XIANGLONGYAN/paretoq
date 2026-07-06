@@ -172,7 +172,7 @@ class CustomBinDataset(torch.utils.data.Dataset):
         return dict(input_ids=input_ids, labels=labels)
 
 
-def preprocess_jsonl_to_bin_split(train_path, valid_path, cache_dir, tokenizer):
+def preprocess_jsonl_to_bin_split(train_path, valid_path, cache_dir, tokenizer, max_train_tokens=None):
     """
     Streams JSONL data to binary format using uint32.
     If valid_path is None, splits the first 10,000 lines of train_path into validation.
@@ -191,21 +191,51 @@ def preprocess_jsonl_to_bin_split(train_path, valid_path, cache_dir, tokenizer):
     print(f"Cache directory: {cache_dir}")
 
     # Helper function to stream a jsonl iterator into a binary file
-    def stream_to_bin(line_iterator, bin_filepath):
+    def stream_to_bin(line_iterator, bin_filepath, max_tokens=None):
         chunk_tokens = []
         chunk_limit = 1000000
         total_tokens = 0
         line_count = 0
+        batch_texts = []
+        batch_size = 16384
+
+        def process_batch(texts):
+            # Tokenize batch of texts in parallel using Rust threads
+            batch_outputs = tokenizer(texts, add_special_tokens=False)["input_ids"]
+            batch_ids = []
+            for ids in batch_outputs:
+                ids.append(tokenizer.eos_token_id)
+                batch_ids.extend(ids)
+            return batch_ids
+
         with open(bin_filepath, "wb") as f_out:
             for line in line_iterator:
                 if not line.strip():
                     continue
                 item = json.loads(line)
-                ids = tokenizer(item["text"])["input_ids"]
-                ids.append(tokenizer.eos_token_id)
-                chunk_tokens.extend(ids)
-                
+                batch_texts.append(item["text"])
                 line_count += 1
+
+                if len(batch_texts) >= batch_size:
+                    ids = process_batch(batch_texts)
+                    
+                    # Check if adding this batch exceeds max_tokens limit
+                    if max_tokens is not None and total_tokens + len(chunk_tokens) + len(ids) >= max_tokens:
+                        needed = max_tokens - (total_tokens + len(chunk_tokens))
+                        ids = ids[:needed]
+                        chunk_tokens.extend(ids)
+                        
+                        # Write the final chunk and exit early
+                        arr = np.array(chunk_tokens, dtype=np.uint32)
+                        f_out.write(arr.tobytes())
+                        total_tokens += len(chunk_tokens)
+                        chunk_tokens = []
+                        batch_texts = []
+                        break
+                    
+                    chunk_tokens.extend(ids)
+                    batch_texts = []
+
                 if line_count % 50000 == 0:
                     print(f"  Processed {line_count} lines...")
 
@@ -214,6 +244,16 @@ def preprocess_jsonl_to_bin_split(train_path, valid_path, cache_dir, tokenizer):
                     f_out.write(arr.tobytes())
                     total_tokens += len(chunk_tokens)
                     chunk_tokens = []
+            
+            # Process remaining batch (only if we didn't break early)
+            if batch_texts:
+                ids = process_batch(batch_texts)
+                if max_tokens is not None and total_tokens + len(chunk_tokens) + len(ids) >= max_tokens:
+                    needed = max_tokens - (total_tokens + len(chunk_tokens))
+                    ids = ids[:needed]
+                chunk_tokens.extend(ids)
+
+            # Write remaining chunk
             if chunk_tokens:
                 arr = np.array(chunk_tokens, dtype=np.uint32)
                 f_out.write(arr.tobytes())
@@ -234,13 +274,13 @@ def preprocess_jsonl_to_bin_split(train_path, valid_path, cache_dir, tokenizer):
         print("Preprocessing validation dataset...")
         stream_to_bin(line_generator(valid_path), valid_bin)
         print("Preprocessing training dataset...")
-        stream_to_bin(line_generator(train_path), train_bin)
+        stream_to_bin(line_generator(train_path), train_bin, max_tokens=max_train_tokens)
     else:
         # Original logic: train_data = data[10000:], valid_data = data[:10000]
         print("Splitting train dataset: first 10,000 lines as validation dataset...")
         stream_to_bin(line_generator(train_path, end_line=10000), valid_bin)
         print("Splitting train dataset: remaining lines as training dataset...")
-        stream_to_bin(line_generator(train_path, start_line=10000), train_bin)
+        stream_to_bin(line_generator(train_path, start_line=10000), train_bin, max_tokens=max_train_tokens)
 
     return train_bin, valid_bin
 

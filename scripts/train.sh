@@ -7,6 +7,7 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --output_model_filename "1B-finetuned-4bit" \
 --train_data_local_path "/data2/datasets/HuggingFaceFW_fineweb-edu/HuggingFaceFW_fineweb-edu_sample-10BT_train.jsonl" \
 --eval_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--max_train_tokens 1000000000 \
 --do_train True \
 --do_eval False \
 --eval_strategy "no" \
