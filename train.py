@@ -229,17 +229,25 @@ def train():
     )
     log.info("Complete tokenizer loading...")
 
-    train_dataset, valid_dataset = datautils.get_train_val_dataset(
+    import os
+    # Create a sanitised model name to avoid vocabulary collision across different models
+    model_safe_name = model_args.input_model_filename.replace("/", "_").replace("\\", "_")
+    cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name)
+
+    train_bin, valid_bin = datautils.preprocess_jsonl_to_bin_split(
         train_path=data_args.train_data_local_path,
         valid_path=data_args.eval_data_local_path
         if data_args.eval_data_local_path is not None
         else None,
+        cache_dir=cache_dir,
+        tokenizer=tokenizer
     )
-    train_data = datautils.CustomJsonDataset(
-        train_dataset, tokenizer, block_size=training_args.model_max_length
+
+    train_data = datautils.CustomBinDataset(
+        train_bin, block_size=training_args.model_max_length
     )
-    valid_data = datautils.CustomJsonDataset(
-        valid_dataset, tokenizer, block_size=min(training_args.model_max_length, 1024)
+    valid_data = datautils.CustomBinDataset(
+        valid_bin, block_size=min(training_args.model_max_length, 1024)
     )
     model.config.use_cache = False
     myTrainer = MuonTrainer

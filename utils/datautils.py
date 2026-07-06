@@ -90,6 +90,8 @@ def get_train_val_dataset(train_path, valid_path=None):
     return train_data, valid_data
 
 
+'''
+全量加载占用内存太大，以及有冗余（不需要 input_ids 以外的键）；缺少 eos 
 class CustomJsonDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, tokenizer, block_size=1024):
         raw_data = dataset
@@ -134,7 +136,6 @@ class CustomJsonDataset(torch.utils.data.Dataset):
                 # Append the value to the list associated with the key in dict_of_lists
                 concatenated_examples[key].extend(d[key])
         total_length = len(concatenated_examples["input_ids"])
-        print(f'The dataset has {total_length} tokens.')
         # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
         # customize this part to your needs.
         if total_length >= self.block_size:
@@ -149,6 +150,99 @@ class CustomJsonDataset(torch.utils.data.Dataset):
         }
         result["labels"] = result["input_ids"].copy()
         return result
+'''
+
+class CustomBinDataset(torch.utils.data.Dataset):
+    def __init__(self, bin_path, block_size=1024):
+        self.block_size = block_size
+        # Memory map the binary file (read-only mode)
+        self.data = np.memmap(bin_path, dtype=np.uint32, mode='r')
+        self.num_blocks = len(self.data) // self.block_size
+
+    def __len__(self):
+        return self.num_blocks
+
+    def __getitem__(self, idx):
+        start = idx * self.block_size
+        end = start + self.block_size
+        
+        # Load the slice into memory and cast to LongTensor (int64)
+        input_ids = torch.from_numpy(self.data[start:end].astype(np.int64))
+        labels = input_ids.clone()
+        return dict(input_ids=input_ids, labels=labels)
+
+
+def preprocess_jsonl_to_bin_split(train_path, valid_path, cache_dir, tokenizer):
+    """
+    Streams JSONL data to binary format using uint32.
+    If valid_path is None, splits the first 10,000 lines of train_path into validation.
+    """
+    import os
+    os.makedirs(cache_dir, exist_ok=True)
+    train_bin = os.path.join(cache_dir, "train.bin")
+    valid_bin = os.path.join(cache_dir, "val.bin")
+
+    # If already preprocessed, skip
+    if os.path.exists(train_bin) and os.path.exists(valid_bin):
+        print(f"Preprocessed binary cache files found at {cache_dir}. Skipping preprocessing.")
+        return train_bin, valid_bin
+
+    print(f"Starting offline preprocessing of datasets into binary format...")
+    print(f"Cache directory: {cache_dir}")
+
+    # Helper function to stream a jsonl iterator into a binary file
+    def stream_to_bin(line_iterator, bin_filepath):
+        chunk_tokens = []
+        chunk_limit = 1000000
+        total_tokens = 0
+        line_count = 0
+        with open(bin_filepath, "wb") as f_out:
+            for line in line_iterator:
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                ids = tokenizer(item["text"])["input_ids"]
+                ids.append(tokenizer.eos_token_id)
+                chunk_tokens.extend(ids)
+                
+                line_count += 1
+                if line_count % 50000 == 0:
+                    print(f"  Processed {line_count} lines...")
+
+                if len(chunk_tokens) >= chunk_limit:
+                    arr = np.array(chunk_tokens, dtype=np.uint32)
+                    f_out.write(arr.tobytes())
+                    total_tokens += len(chunk_tokens)
+                    chunk_tokens = []
+            if chunk_tokens:
+                arr = np.array(chunk_tokens, dtype=np.uint32)
+                f_out.write(arr.tobytes())
+                total_tokens += len(chunk_tokens)
+        print(f"Saved {bin_filepath} with {total_tokens} tokens (processed {line_count} lines).")
+
+    # Generator for files
+    def line_generator(filepath, start_line=0, end_line=None):
+        with open(filepath, "r", encoding="utf-8") as f:
+            for idx, line in enumerate(f):
+                if idx < start_line:
+                    continue
+                if end_line is not None and idx >= end_line:
+                    break
+                yield line
+
+    if valid_path:
+        print("Preprocessing validation dataset...")
+        stream_to_bin(line_generator(valid_path), valid_bin)
+        print("Preprocessing training dataset...")
+        stream_to_bin(line_generator(train_path), train_bin)
+    else:
+        # Original logic: train_data = data[10000:], valid_data = data[:10000]
+        print("Splitting train dataset: first 10,000 lines as validation dataset...")
+        stream_to_bin(line_generator(train_path, end_line=10000), valid_bin)
+        print("Splitting train dataset: remaining lines as training dataset...")
+        stream_to_bin(line_generator(train_path, start_line=10000), train_bin)
+
+    return train_bin, valid_bin
 
 
 def jload(filename, mode="r"):
@@ -156,3 +250,4 @@ def jload(filename, mode="r"):
     with open(filename, mode) as f:
         jdict = json.load(f)
     return jdict
+

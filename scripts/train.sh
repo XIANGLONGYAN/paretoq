@@ -12,7 +12,7 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --evaluation_strategy "no" \
 --use_muon True \
 --learning_rate 1e-5 \
---muon_learning_rate 5e-4 \
+--muon_learning_rate 4e-4 \
 --model_max_length 2048 \
 --fp16 False \
 --bf16 True \
@@ -40,7 +40,7 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --eval_ppl \
 --eval_lm_eval \
 --tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
---eval_batch_size 64
+--eval_batch_size 64 \
 --use_lsq_weight False \
 --use_lsq_activation False \
 --use_stableqat False \

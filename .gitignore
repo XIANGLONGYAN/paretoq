@@ -23,5 +23,5 @@ output/
 # 隔离 scripts/ 的脚本文件
 skip_worktree.sh
 
-# 笔记文件
-note.md
+# 数据集二进制缓存
+dataset_cache/
