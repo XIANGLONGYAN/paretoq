@@ -232,7 +232,9 @@ def train():
     import os
     # Create a sanitised model name to avoid vocabulary collision across different models
     model_safe_name = model_args.input_model_filename.replace("/", "_").replace("\\", "_")
-    cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name)
+    # Get dataset name to avoid cache collision across different datasets
+    dataset_safe_name = os.path.basename(data_args.train_data_local_path).replace(".jsonl", "")
+    cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name, dataset_safe_name)
 
     train_bin, valid_bin = datautils.preprocess_jsonl_to_bin_split(
         train_path=data_args.train_data_local_path,
