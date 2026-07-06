@@ -5,11 +5,11 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --local_dir "/home/jiaqichen/data2/paretoq" \
 --input_model_filename "meta-llama/Llama-3.2-1B" \
 --output_model_filename "1B-finetuned-4bit" \
---train_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_train.jsonl" \
+--train_data_local_path "/data2/datasets/HuggingFaceFW_fineweb-edu/HuggingFaceFW_fineweb-edu_sample-10BT_train.jsonl" \
 --eval_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
 --do_train True \
 --do_eval False \
---evaluation_strategy "no" \
+--eval_strategy "no" \
 --use_muon True \
 --learning_rate 1e-5 \
 --muon_learning_rate 4e-4 \
@@ -48,8 +48,8 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --use_dsq_activation False \
 --dsq_init_alpha 0.2 \
 --dsq_alpha_lambda 1e-4 \
---use_daq_weight True \
---use_daq_activation True \
+--use_daq_weight False \
+--use_daq_activation False \
 --daq_gamma 2.0 \
 --daq_sigma_k_weight 1.0 \
 --daq_sigma_k_act 2.0
