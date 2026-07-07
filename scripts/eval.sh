@@ -3,20 +3,23 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-CUDA_VISIBLE_DEVICES=2 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29519 train.py \
+CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29519 train.py \
+--w_bits 4 \
+--a_bits 4 \
+--use_asymmetric_act True \
 --contain_weight_clip_val True \
---use_lsq True \
---use_stableqat False \
 --local_dir "/home/jiaqichen/data2/paretoq" \
 --input_model_filename "/home/jiaqichen/data2/paretoq/models/1B-finetuned-4bit" \
 --output_model_filename "1B-finetuned-4bit" \
---train_data_local_path "/home/jiaqichen/data2/dataset/wikitext_wikitext-2-raw-v1_train.jsonl" \
---eval_data_local_path "/home/jiaqichen/data2/dataset/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--train_data_local_path "/data2/datasets/HuggingFaceFW_fineweb-edu/HuggingFaceFW_fineweb-edu_sample-10BT_train.jsonl" \
+--eval_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--max_train_tokens 100000000 \
 --do_train False \
---do_eval True \
+--do_eval False \
+--eval_strategy "no" \
 --use_muon True \
---learning_rate 2e-5 \
---muon_learning_rate 8e-5 \
+--learning_rate 1e-5 \
+--muon_learning_rate 4e-4 \
 --model_max_length 2048 \
 --fp16 False \
 --bf16 True \
@@ -27,7 +30,6 @@ CUDA_VISIBLE_DEVICES=2 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 1 \
 --gradient_accumulation_steps 1 \
---evaluation_strategy "no" \
 --save_strategy "steps" \
 --save_steps 2000 \
 --save_total_limit 1 \
@@ -36,13 +38,24 @@ CUDA_VISIBLE_DEVICES=2 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --lr_scheduler_type "cosine" \
 --logging_steps 1 \
 --tf32 False \
---gradient_checkpointing True \
+--gradient_checkpointing False \
 --qat True \
 --full_determinism True \
 --dataloader_num_workers 0 \
 --seed 42 \
---w_bits 4 \
 --eval_ppl \
 --eval_lm_eval \
 --tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
---eval_batch_size 64
+--eval_batch_size 64 \
+--use_lsq_weight False \
+--use_lsq_activation False \
+--use_stableqat False \
+--use_dsq_weight False \
+--use_dsq_activation False \
+--dsq_init_alpha 0.2 \
+--dsq_alpha_lambda 1e-4 \
+--use_daq_weight False \
+--use_daq_activation False \
+--daq_gamma 2.0 \
+--daq_sigma_k_weight 1.0 \
+--daq_sigma_k_act 2.0
