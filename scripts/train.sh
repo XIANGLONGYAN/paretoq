@@ -1,7 +1,9 @@
 CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
+--use_stableqat False \
 --w_bits 4 \
 --a_bits 4 \
---use_asymmetric_act True \
+--weight_asymmetric False \
+--act_asymmetric True \
 --local_dir "/home/jiaqichen/data2/paretoq" \
 --input_model_filename "meta-llama/Llama-3.2-1B" \
 --output_model_filename "1B-finetuned-4bit" \
@@ -12,8 +14,10 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --do_eval False \
 --eval_strategy "no" \
 --use_muon True \
---learning_rate 1e-5 \
---muon_learning_rate 4e-4 \
+--learning_rate 2e-3 \
+--adamw_learning_rate 1e-5 \
+--train_lm_head_embed False \
+--train_rmsnorm False \
 --model_max_length 2048 \
 --fp16 False \
 --bf16 True \
@@ -41,16 +45,4 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --eval_ppl \
 --eval_lm_eval \
 --tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
---eval_batch_size 64 \
---use_lsq_weight False \
---use_lsq_activation False \
---use_stableqat False \
---use_dsq_weight False \
---use_dsq_activation False \
---dsq_init_alpha 0.2 \
---dsq_alpha_lambda 1e-4 \
---use_daq_weight False \
---use_daq_activation False \
---daq_gamma 2.0 \
---daq_sigma_k_weight 1.0 \
---daq_sigma_k_act 2.0
+--eval_batch_size 64 

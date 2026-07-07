@@ -37,6 +37,14 @@ class ModelArguments:
             "help": "#bits to use for activation quantization; use 16 for full precision."
         },
     )
+    weight_asymmetric: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use asymmetric weight quantization."}
+    )
+    act_asymmetric: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use asymmetric activation quantization."}
+    )
     contain_weight_clip_val: Optional[bool] = field(
         default=False,
         metadata={
@@ -106,9 +114,9 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to use Muon optimizer. When True, bypasses native optim validation."}
     )
-    muon_learning_rate: Optional[float] = field(
+    adamw_learning_rate: Optional[float] = field(
         default=None,
-        metadata={"help": "Learning rate for Muon optimizer. If not set, defaults to learning_rate * 10."}
+        metadata={"help": "Learning rate for auxiliary AdamW optimizer."}
     )
     use_stableqat: Optional[bool] = field(
         default=False,
@@ -121,10 +129,6 @@ class TrainingArguments(transformers.TrainingArguments):
     use_lsq_activation: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to use LSQ for activation quantization during QAT."}
-    )
-    use_asymmetric_act: Optional[bool] = field(
-        default=False,
-        metadata={"help": "Whether to use asymmetric activation quantization."}
     )
     use_dsq_weight: Optional[bool] = field(
         default=False,
@@ -161,6 +165,14 @@ class TrainingArguments(transformers.TrainingArguments):
     daq_sigma_k_act: Optional[float] = field(
         default=2.0,
         metadata={"help": "Sigma_k parameter (Gaussian kernel std) for activation in DAQ."}
+    )
+    train_lm_head_embed: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to train lm_head and embed_tokens parameters."}
+    )
+    train_rmsnorm: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to train RMSNorm layers parameters."}
     )
 
 

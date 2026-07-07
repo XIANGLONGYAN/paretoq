@@ -8,19 +8,146 @@ import math
 import torch
 import torch.nn as nn
 
+class DynamicQuantize(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, num_bits, asymmetric=False, sine_amplitude=None):
+        if num_bits >= 16:
+            return input
+        
+        ctx.sine_amplitude = sine_amplitude
+   
+        if asymmetric:
+            Qn = 0
+            Qp = 2**num_bits - 1
+            max_val = torch.max(input, dim=-1, keepdim=True)[0]
+            min_val = torch.min(input, dim=-1, keepdim=True)[0]
+            scale = (max_val - min_val) / (Qp - Qn)
+            scale = torch.clamp(scale, min=1e-5)
+            zp = torch.round(-min_val / scale)
+            quantized = torch.round(input / scale) + zp
+            indicate_middle = ((Qn <= quantized) & (quantized <= Qp)).float()
+            quantized = torch.clamp(quantized, Qn, Qp)
+            dequantized = (quantized - zp) * scale
+        else:
+            Qn = -(2 ** (num_bits - 1))
+            Qp = 2 ** (num_bits - 1) - 1
+            abs_max = torch.max(torch.abs(input), dim=-1, keepdim=True)[0]
+            scale = abs_max / Qp
+            scale = torch.clamp(scale, min=1e-5)
+            quantized = torch.round(input / scale)
+            indicate_middle = ((Qn <= quantized) & (quantized <= Qp)).float()
+            quantized = torch.clamp(quantized, Qn, Qp)
+            dequantized = quantized * scale
+        
+        ctx.indicate_middle = indicate_middle
+
+        return dequantized
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        if ctx.sine_amplitude is None:
+            return grad_output * ctx.indicate_middle, None, None, None
+        grad_input = grad_output * stableqat_surrogate_gradient(grad_output, ctx.sine_amplitude) * ctx.indicate_middle
+        return grad_input, None, None, None
+
+class QuantizeLinear(nn.Linear):
+    def __init__(
+        self,
+        *args,
+        w_bits=16,
+        a_bits=16,
+        weight_asymmetric=False,
+        act_asymmetric=True,
+        use_stableqat=False,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.w_bits = w_bits
+        self.a_bits = a_bits
+        self.weight_asymmetric = weight_asymmetric
+        self.act_asymmetric = act_asymmetric
+        
+        self.use_stableqat = use_stableqat
+
+        self.register_buffer('sine_amplitude', torch.tensor([0.21]) if use_stableqat else torch.tensor([]))
+
+
+    def forward(self, input):
+        # 这里也可以设置 StableQAT 试一试
+        input = DynamicQuantize.apply(input, self.a_bits, self.act_asymmetric, None)
+        weight = DynamicQuantize.apply(self.weight, self.w_bits, self.weight_asymmetric, self.sine_amplitude if self.use_stableqat else None)
+        output = nn.functional.linear(input, weight, self.bias)
+        return output
+        
+
+    @classmethod
+    def from_linear(
+        cls,
+        linear: nn.Linear, 
+        w_bits=16,
+        a_bits=16,
+        weight_asymmetric=False,
+        act_asymmetric=True,
+        use_stableqat=False,
+    ):
+        quant_linear = cls(in_features=linear.in_features, out_features=linear.out_features, bias=linear.bias is not None,
+                           w_bits=w_bits, a_bits=a_bits, weight_asymmetric=weight_asymmetric, act_asymmetric=act_asymmetric,
+                           use_stableqat=use_stableqat)
+        quant_linear.weight = linear.weight
+        if linear.bias is not None:
+            quant_linear.bias = linear.bias
+        return quant_linear
+
+def replace_linear_with_quantized(
+    model: nn.Module,
+    w_bits: int = 16,
+    a_bits: int = 16,
+    weight_asymmetric: bool = False,
+    act_asymmetric: bool = True,
+    skip_keywords: list = ["lm_head", "embed"], # skip replacing Linear layers that contain these keywords in their names
+    use_stableqat: bool = False
+):
+    if w_bits >= 16 and a_bits >= 16:
+        raise ValueError("Both w_bits and a_bits are >= 16, no need to replace Linear with QuantizeLinear.")
+    
+    replace_count = 0
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear) and not isinstance(module, QuantizeLinear):
+            if any(kw in name for kw in skip_keywords):
+                continue
+            _set_module_by_name(model, name, QuantizeLinear.from_linear(
+                module, 
+                w_bits=w_bits, 
+                a_bits=a_bits, 
+                weight_asymmetric=weight_asymmetric, 
+                act_asymmetric=act_asymmetric, 
+                use_stableqat=use_stableqat
+            ))
+            replace_count += 1
+    
+    print(f"[ParetoQ] Replaced {replace_count} nn.Linear with QuantizeLinear.")
+    return model
+
+def _set_module_by_name(model: nn.Module, name: str, new_module: nn.Module):
+    parts = name.split(".")
+    parent = model
+    for part in parts[:-1]:
+        parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
+    setattr(parent, parts[-1], new_module)
+
 def stableqat_surrogate_gradient(v, amplitude):
-    """计算 StableQAT 的傅里叶余弦平滑梯度系数 g(v)"""
     item = torch.pi * (v + v.round())
     sum_term = 0
     for idx in range(len(amplitude)):
         sum_term += amplitude[idx] * torch.cos((2 * idx + 1) * item)
     
-    denom = 1 + pow(2, 0.5) * torch.pi * sum_term
+    denom = 1 + 2**0.5 * torch.pi * sum_term
     denom = torch.clamp(denom, min=1e-5)
-    grad_x = (1 - pow(2, 0.5) * torch.pi * sum_term) / denom
+    grad_x = (1 - 2**0.5 * torch.pi * sum_term) / denom
     return grad_x
 
 
+'''
 class DynamicActivationQuant(torch.autograd.Function):
     """
     动态自适应激活值量化算子 (Token-wise)
@@ -748,6 +875,7 @@ def quantize_weight(
 
     return q_weight
 
+    
 
 class QuantizeLinear(nn.Linear):
     def __init__(
@@ -979,14 +1107,4 @@ def replace_linear_with_quantized(
     print(f"[ParetoQ] Replaced {len(replace_list)} nn.Linear with QuantizeLinear (w_bits={w_bits}, a_bits={a_bits}, use_stableqat={use_stableqat}, use_dsq_weight={use_dsq_weight}, use_dsq_activation={use_dsq_activation}, use_daq_weight={use_daq_weight}, use_daq_activation={use_daq_activation})")
     return model
 
-
-def _set_module_by_name(model: nn.Module, name: str, new_module: nn.Module):
-    """通过点分隔的名称路径设置子模块"""
-    parts = name.split(".")
-    parent = model
-    for part in parts[:-1]:
-        if part.isdigit():
-            parent = parent[int(part)]
-        else:
-            parent = getattr(parent, part)
-    setattr(parent, parts[-1], new_module)
+'''
