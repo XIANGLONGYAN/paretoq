@@ -45,13 +45,14 @@ class ModelArguments:
         default=False,
         metadata={"help": "Whether to use asymmetric activation quantization."}
     )
+'''
     contain_weight_clip_val: Optional[bool] = field(
         default=False,
         metadata={
             "help": "Set contain_weight_clip_val=True when load a trained quantized model."
         },
     )
-
+'''
 @dataclass
 class DataArguments:
     max_train_samples: Optional[int] = field(
@@ -118,10 +119,19 @@ class TrainingArguments(transformers.TrainingArguments):
         default=None,
         metadata={"help": "Learning rate for auxiliary AdamW optimizer."}
     )
+    train_lm_head_embed: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to train lm_head and embed_tokens parameters."}
+    )
+    train_rmsnorm: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to train RMSNorm layers parameters."}
+    )
     use_stableqat: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to enable StableQAT (Fourier surrogate gradient) during QAT."}
     )
+'''  
     use_lsq_weight: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to use LSQ for weight quantization during QAT."}
@@ -166,15 +176,7 @@ class TrainingArguments(transformers.TrainingArguments):
         default=2.0,
         metadata={"help": "Sigma_k parameter (Gaussian kernel std) for activation in DAQ."}
     )
-    train_lm_head_embed: Optional[bool] = field(
-        default=False,
-        metadata={"help": "Whether to train lm_head and embed_tokens parameters."}
-    )
-    train_rmsnorm: Optional[bool] = field(
-        default=False,
-        metadata={"help": "Whether to train RMSNorm layers parameters."}
-    )
-
+'''
 
 def process_args():
     parser = transformers.HfArgumentParser(
