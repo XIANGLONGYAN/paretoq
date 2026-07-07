@@ -103,7 +103,6 @@ class MuonTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
     '''
 
-
 def train():
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args, eval_args = process_args()
