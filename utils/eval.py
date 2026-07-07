@@ -103,16 +103,18 @@ def run_evaluation(model, tokenizer, tasks, batch_size="auto", eval_ppl=False, e
 
             for task_name in tasks_without_chat:
                 print(task_name)
-                task_results = lm_eval.simple_evaluate( # call simple_evaluate
+                res = lm_eval.simple_evaluate( # call simple_evaluate
                     model=lm_obj,
                     tasks=[task_name],
                     num_fewshot=0,
                     batch_size=batch_size,
                     task_manager=task_manager,
-                )["results"]
+                )
 
-                results1.update(task_results)
-                print(make_table({"results": task_results, "versions": {}, "n-shot": {}, "higher_is_better": {}}))
+                if res is not None:
+                    task_results = res["results"]
+                    results1.update(task_results)
+                    print(make_table({"results": task_results, "versions": {}, "n-shot": {}, "higher_is_better": {}}))
 
         # 第二批：需要 chat template 的任务
         if tasks_with_chat:
@@ -122,17 +124,19 @@ def run_evaluation(model, tokenizer, tasks, batch_size="auto", eval_ppl=False, e
 
             for task_name in tasks_with_chat:
                 print(task_name)
-                task_results = lm_eval.simple_evaluate( # call simple_evaluate
+                res = lm_eval.simple_evaluate( # call simple_evaluate
                     model=lm_obj,
                     tasks=[task_name],
                     batch_size=batch_size,
                     task_manager=task_manager,
                     apply_chat_template=True,
                     fewshot_as_multiturn=True,
-                )["results"]
+                )
 
-                results2.update(task_results)
-                print(make_table({"results": task_results, "versions": {}, "n-shot": {}, "higher_is_better": {}}))
+                if res is not None:
+                    task_results = res["results"]
+                    results2.update(task_results)
+                    print(make_table({"results": task_results, "versions": {}, "n-shot": {}, "higher_is_better": {}}))
 
         all_results = {}
         if tasks_without_chat:

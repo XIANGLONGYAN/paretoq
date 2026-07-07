@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=29518 train.py \
+CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
 --w_bits 4 \
 --a_bits 4 \
 --use_asymmetric_act True \
@@ -7,7 +7,7 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --output_model_filename "1B-finetuned-4bit" \
 --train_data_local_path "/data2/datasets/HuggingFaceFW_fineweb-edu/HuggingFaceFW_fineweb-edu_sample-10BT_train.jsonl" \
 --eval_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
---max_train_tokens 1000000000 \
+--max_train_tokens 100000000 \
 --do_train True \
 --do_eval False \
 --eval_strategy "no" \
@@ -33,7 +33,7 @@ CUDA_VISIBLE_DEVICES=6 torchrun --nnodes=1 --nproc_per_node=1 --master_port=2951
 --lr_scheduler_type "cosine" \
 --logging_steps 1 \
 --tf32 False \
---gradient_checkpointing True \
+--gradient_checkpointing False \
 --qat True \
 --full_determinism True \
 --dataloader_num_workers 0 \
