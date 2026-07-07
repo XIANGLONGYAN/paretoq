@@ -28,42 +28,46 @@ class MuonTrainer(Trainer):
         from optimizer.muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
 
         # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head, not weight_clip_val)
-        hidden_matrix_params = [
+        muon_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim >= 2 and "embed" not in n and "lm_head" not in n 
+            if p.requires_grad and p.ndim >= 2 and "embed" not in n and "lm_head" not in n 
             # and "clip_val" not in n
-            and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
+            # and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
         ]
-        other_params = [
+        adamw_params = [
             p for n, p in self.model.named_parameters() 
-            if p.ndim < 2
+            if p.requires_grad and p.ndim < 2
             # or "clip_val" in n
-            or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
+            # or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
         ]
 
-        muon_lr = (
-            self.args.muon_learning_rate 
-            if self.args.muon_learning_rate is not None 
-            else self.args.learning_rate * 10
-        )
+        # Resolve learning rates
+        muon_lr = self.args.learning_rate
+        adamw_lr = self.args.adamw_learning_rate
+        if len(adamw_params) > 0 and adamw_lr is None:
+            raise ValueError(
+                "adamw_learning_rate must be explicitly specified when there are parameters to be optimized by AdamW "
+            )
 
         param_groups = [
             {
-                "params": hidden_matrix_params,
+                "params": muon_params,
                 "lr": muon_lr,
                 "momentum": 0.95,
                 "weight_decay": self.args.weight_decay,
                 "use_muon": True,
-            },
-            {
-                "params": other_params,
-                "lr": self.args.learning_rate,
+            }
+        ]
+
+        if len(adamw_params) > 0:
+            param_groups.append({
+                "params": adamw_params,
+                "lr": adamw_lr,
                 "betas": (0.9, 0.95),
                 "eps": 1e-8,
                 "weight_decay": self.args.weight_decay,
                 "use_muon": False,
-            }
-        ]
+            })
 
         if dist.is_initialized():
             self.optimizer = MuonWithAuxAdam(param_groups)
@@ -76,8 +80,7 @@ class MuonTrainer(Trainer):
         if return_outputs:
             loss, outputs = super().compute_loss(model, inputs, return_outputs=True, **kwargs)
         else:
-            loss = super().compute_loss(model, inputs, return_outputs=False, **kwargs)
-            outputs = None
+            loss, outputs = super().compute_loss(model, inputs, return_outputs=False, **kwargs), None
 
         # 前置显式检查：如果未启用权重或激活值的 DSQ，直接返回原版 Loss，避免多余计算
         use_dsq_w = getattr(self.args, "use_dsq_weight", False)
@@ -97,7 +100,6 @@ class MuonTrainer(Trainer):
             loss = loss + dsq_alpha_lambda * dsq_reg
             
         return (loss, outputs) if return_outputs else loss
-
 
 def train():
     dist.init_process_group(backend="nccl")
@@ -218,6 +220,19 @@ def train():
     model.cuda()
     log.info("Complete model loading...")
 
+    # Freeze parameters based on arguments
+    if not training_args.train_lm_head_embed:
+        log.info("Freezing lm_head and embed_tokens...")
+        for name, param in model.named_parameters():
+            if "lm_head" in name or "embed_tokens" in name:
+                param.requires_grad = False
+
+    if not training_args.train_rmsnorm:
+        log.info("Freezing RMSNorm layers...")
+        for name, param in model.named_parameters():
+            if "layernorm" in name or "norm.weight" in name:
+                param.requires_grad = False
+
     log.info("Start to load tokenizer...")
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         pretrained_model_name_or_path=model_args.input_model_filename,
@@ -276,6 +291,9 @@ def train():
         train_result = trainer.train()
         trainer.save_state()
         utils.safe_save_model_for_hf_trainer(trainer, model_args.output_model_local_path)
+
+    if training_args.do_eval:
+        raise NotImplementedError("do_eval is not supported. Please use --eval_ppl or --eval_lm_eval for evaluation.")
 
     # Evaluation
     if eval_args.eval_ppl or eval_args.eval_lm_eval:

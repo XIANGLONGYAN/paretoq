@@ -12,8 +12,10 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --do_eval False \
 --eval_strategy "no" \
 --use_muon True \
---learning_rate 1e-5 \
---muon_learning_rate 4e-4 \
+--learning_rate 2e-3 \
+--adamw_learning_rate 1e-5 \
+--train_lm_head_embed False \
+--train_rmsnorm False \
 --model_max_length 2048 \
 --fp16 False \
 --bf16 True \
