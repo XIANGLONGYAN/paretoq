@@ -229,33 +229,38 @@ def train():
     )
     log.info("Complete tokenizer loading...")
 
-    import os
-    # Create a sanitised model name to avoid vocabulary collision across different models
-    model_safe_name = model_args.input_model_filename.replace("/", "_").replace("\\", "_")
-    # Get dataset name and append max_train_tokens to avoid cache collision
-    dataset_safe_name = os.path.basename(data_args.train_data_local_path).replace(".jsonl", "")
-    if data_args.max_train_tokens is not None:
-        dataset_folder = f"{dataset_safe_name}_tokens_{data_args.max_train_tokens}"
+    if training_args.do_train or training_args.do_eval:
+        import os
+        # Create a sanitised model name to avoid vocabulary collision across different models
+        model_safe_name = model_args.input_model_filename.replace("/", "_").replace("\\", "_")
+        # Get dataset name and append max_train_tokens to avoid cache collision
+        dataset_safe_name = os.path.basename(data_args.train_data_local_path).replace(".jsonl", "")
+        if data_args.max_train_tokens is not None:
+            dataset_folder = f"{dataset_safe_name}_tokens_{data_args.max_train_tokens}"
+        else:
+            dataset_folder = f"{dataset_safe_name}_all"
+        cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name, dataset_folder)
+
+        train_bin, valid_bin = datautils.preprocess_jsonl_to_bin_split(
+            train_path=data_args.train_data_local_path,
+            valid_path=data_args.eval_data_local_path
+            if data_args.eval_data_local_path is not None
+            else None,
+            cache_dir=cache_dir,
+            tokenizer=tokenizer,
+            max_train_tokens=data_args.max_train_tokens
+        )
+
+        train_data = datautils.CustomBinDataset(
+            train_bin, block_size=training_args.model_max_length
+        )
+        valid_data = datautils.CustomBinDataset(
+            valid_bin, block_size=min(training_args.model_max_length, 1024)
+        )
     else:
-        dataset_folder = f"{dataset_safe_name}_all"
-    cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name, dataset_folder)
+        train_data = None
+        valid_data = None
 
-    train_bin, valid_bin = datautils.preprocess_jsonl_to_bin_split(
-        train_path=data_args.train_data_local_path,
-        valid_path=data_args.eval_data_local_path
-        if data_args.eval_data_local_path is not None
-        else None,
-        cache_dir=cache_dir,
-        tokenizer=tokenizer,
-        max_train_tokens=data_args.max_train_tokens
-    )
-
-    train_data = datautils.CustomBinDataset(
-        train_bin, block_size=training_args.model_max_length
-    )
-    valid_data = datautils.CustomBinDataset(
-        valid_bin, block_size=min(training_args.model_max_length, 1024)
-    )
     model.config.use_cache = False
     myTrainer = MuonTrainer
     trainer = myTrainer(
