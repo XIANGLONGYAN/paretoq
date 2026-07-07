@@ -8,13 +8,18 @@ import math
 import torch
 import torch.nn as nn
 
+
 class DynamicQuantize(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, num_bits, asymmetric=False, sine_amplitude=None):
         if num_bits >= 16:
             return input
         
+        ctx.num_bits = num_bits
         ctx.sine_amplitude = sine_amplitude
+
+        if asymmetric and sine_amplitude is not None:
+            raise NotImplementedError("StableQAT does not support asymmetric quantization yet.")
    
         if asymmetric:
             Qn = 0
@@ -34,20 +39,40 @@ class DynamicQuantize(torch.autograd.Function):
             abs_max = torch.max(torch.abs(input), dim=-1, keepdim=True)[0]
             scale = abs_max / Qp
             scale = torch.clamp(scale, min=1e-5)
-            quantized = torch.round(input / scale)
+
+            scaled_input = input / scale
+            quantized = torch.round(scaled_input)
+
             indicate_middle = ((Qn <= quantized) & (quantized <= Qp)).float()
             quantized = torch.clamp(quantized, Qn, Qp)
             dequantized = quantized * scale
         
-        ctx.indicate_middle = indicate_middle
+        ctx.save_for_backward(indicate_middle, scaled_input if not asymmetric else None)
 
         return dequantized
     
     @staticmethod
     def backward(ctx, grad_output):
+
+        indicate_middle, scaled_input = ctx.saved_tensors
+
+        if ctx.num_bits >= 16:
+            return grad_output, None, None, None
         if ctx.sine_amplitude is None:
-            return grad_output * ctx.indicate_middle, None, None, None
-        grad_input = grad_output * stableqat_surrogate_gradient(grad_output, ctx.sine_amplitude) * ctx.indicate_middle
+            return grad_output * indicate_middle, None, None, None
+
+        def stableqat_surrogate_gradient(v, amplitude):
+            item = torch.pi * (v + v.round())
+            sum_term = 0
+            for idx in range(len(amplitude)):
+                sum_term += amplitude[idx] * torch.cos((2 * idx + 1) * item)
+            
+            denom = 1 + 2**0.5 * torch.pi * sum_term
+            denom = torch.clamp(denom, min=1e-5)
+            grad_x = (1 - 2**0.5 * torch.pi * sum_term) / denom
+            return grad_x
+        
+        grad_input = grad_output * stableqat_surrogate_gradient(scaled_input, ctx.sine_amplitude) * indicate_middle
         return grad_input, None, None, None
 
 class QuantizeLinear(nn.Linear):
@@ -69,7 +94,7 @@ class QuantizeLinear(nn.Linear):
         
         self.use_stableqat = use_stableqat
 
-        self.register_buffer('sine_amplitude', torch.tensor([0.21]) if use_stableqat else torch.tensor([]))
+        self.sine_amplitude = [0.21] if self.use_stableqat else None
 
 
     def forward(self, input):
@@ -135,16 +160,6 @@ def _set_module_by_name(model: nn.Module, name: str, new_module: nn.Module):
         parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
     setattr(parent, parts[-1], new_module)
 
-def stableqat_surrogate_gradient(v, amplitude):
-    item = torch.pi * (v + v.round())
-    sum_term = 0
-    for idx in range(len(amplitude)):
-        sum_term += amplitude[idx] * torch.cos((2 * idx + 1) * item)
-    
-    denom = 1 + 2**0.5 * torch.pi * sum_term
-    denom = torch.clamp(denom, min=1e-5)
-    grad_x = (1 - 2**0.5 * torch.pi * sum_term) / denom
-    return grad_x
 
 
 '''
