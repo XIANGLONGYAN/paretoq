@@ -119,7 +119,51 @@ def train():
     )
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
-        if training_args.use_quest:
+        if training_args.use_hestia:
+            # --- Hestia path ---
+            from utils.utils_hestia import replace_linear_with_hestia, _set_hestia_total_steps
+            # Step 1: Replace layers (no temp_scales yet)
+            model = replace_linear_with_hestia(
+                model,
+                bits=model_args.w_bits,
+                group_size=training_args.hestia_group_size,
+                compress_ratio=training_args.hestia_compress_ratio,
+                init_temp=training_args.hestia_init_temp,
+                end_temp=training_args.hestia_end_temp,
+                anneal_ratio=training_args.hestia_anneal_ratio,
+                skip_keywords=["lm_head", "embed"],
+            )
+            # Step 2: Optional Hessian calibration
+            if training_args.hestia_calib_samples > 0:
+                from utils.utils_hestia_calib import calibrate_hestia
+                from torch.utils.data import DataLoader
+                calib_loader = DataLoader(
+                    train_data,
+                    batch_size=training_args.per_device_train_batch_size,
+                    shuffle=True,
+                    collate_fn=default_data_collator,
+                )
+                temp_scales = calibrate_hestia(
+                    model, calib_loader,
+                    num_samples=training_args.hestia_calib_samples,
+                    device="cuda",
+                )
+                # Re-replace with temp_scales
+                from utils.utils_hestia import replace_linear_with_hestia as _re_hestia
+                model = _re_hestia(
+                    model,
+                    bits=model_args.w_bits,
+                    group_size=training_args.hestia_group_size,
+                    compress_ratio=training_args.hestia_compress_ratio,
+                    init_temp=training_args.hestia_init_temp,
+                    end_temp=training_args.hestia_end_temp,
+                    anneal_ratio=training_args.hestia_anneal_ratio,
+                    temp_scales_dict=temp_scales,
+                    skip_keywords=["lm_head", "embed"],
+                )
+            # Step 3: Set total steps (will be refined after trainer init)
+            _set_hestia_total_steps(training_args.max_steps)
+        elif training_args.use_quest:
             from utils.utils_quest import replace_linear_with_quest
             model = replace_linear_with_quest(
                 model,
@@ -141,6 +185,18 @@ def train():
                 use_stableqat=training_args.use_stableqat,
                 use_robusttraining=training_args.use_robusttraining
             )
+
+
+    # --- WinQ wrapper (applied after quantizer selection, before .cuda()) ---
+    winq_layers = []
+    if training_args.use_winq:
+        from utils.utils_winq import apply_winq_to_model
+        winq_layers = apply_winq_to_model(
+            model,
+            sigma=training_args.winq_sigma,
+            alpha=training_args.winq_alpha,
+        )
+        log.info(f"[WinQ] {len(winq_layers)} layers wrapped")
 
         '''
         if not model_args.contain_weight_clip_val:
@@ -218,6 +274,28 @@ def train():
         eval_dataset=valid_data if training_args.do_eval else None,
         data_collator=default_data_collator,
     )
+
+    # Register Hestia step callback if using Hestia
+    if training_args.use_hestia:
+        from utils.utils_hestia import HestiaStepCallback, _set_hestia_total_steps
+        trainer.add_callback(HestiaStepCallback())
+        # Re-bind total steps now that trainer is configured
+        total_steps = trainer.state.max_steps if trainer.state.max_steps > 0 else (
+            len(train_data) // training_args.per_device_train_batch_size
+            // training_args.gradient_accumulation_steps
+            * training_args.num_train_epochs
+        )
+        _set_hestia_total_steps(total_steps if total_steps > 0 else training_args.max_steps)
+        log.info(f"[Hestia] Total training steps bound: {total_steps if total_steps > 0 else training_args.max_steps}")
+
+    # Register WinQ callback if using WinQ
+    if training_args.use_winq and winq_layers:
+        from utils.utils_winq import WinQCallback
+        trainer.add_callback(WinQCallback(
+            winq_layers,
+            interval=training_args.winq_reset_interval,
+        ))
+        log.info(f"[WinQ] Callback registered (reset every {training_args.winq_reset_interval} steps)")
 
     if training_args.do_train:
         train_result = trainer.train()

@@ -5,6 +5,17 @@ CUDA_VISIBLE_DEVICES=0,1,2,7 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --quest_hadamard_block_size 128 \
 --quest_trust_scale_weight 1.0 \
 --quest_trust_scale_act 1.0 \
+--use_hestia False \
+--hestia_compress_ratio 0.2 \
+--hestia_init_temp 1.0 \
+--hestia_end_temp 0.0 \
+--hestia_anneal_ratio 0.8 \
+--hestia_group_size 0 \
+--hestia_calib_samples 0 \
+--use_winq False \
+--winq_sigma 1e-3 \
+--winq_alpha 0.3 \
+--winq_reset_interval 40000 \
 --w_bits 4 \
 --a_bits 4 \
 --weight_asymmetric False \

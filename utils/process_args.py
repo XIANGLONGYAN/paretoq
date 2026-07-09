@@ -151,6 +151,50 @@ class TrainingArguments(transformers.TrainingArguments):
         default=1.0,
         metadata={"help": "Trust threshold multiplier for activation quantization in QuEST."}
     )
+    use_hestia: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use Hestia (softmax-differentiable) QAT for extremely low-bit weights."}
+    )
+    hestia_compress_ratio: Optional[float] = field(
+        default=0.2,
+        metadata={"help": "Fraction of training steps allocated to Hestia compress phase."}
+    )
+    hestia_init_temp: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Initial temperature for Hestia softmax relaxation."}
+    )
+    hestia_end_temp: Optional[float] = field(
+        default=0.0,
+        metadata={"help": "Final temperature for Hestia (0 = hard quantization)."}
+    )
+    hestia_anneal_ratio: Optional[float] = field(
+        default=0.8,
+        metadata={"help": "Fraction of training steps allocated to Hestia anneal phase."}
+    )
+    hestia_group_size: Optional[int] = field(
+        default=0,
+        metadata={"help": "Group size for Hestia quantization: 0=per-tensor, -1=per-channel."}
+    )
+    hestia_calib_samples: Optional[int] = field(
+        default=0,
+        metadata={"help": "Number of samples for Hestia Hessian calibration (0 = skip calibration)."}
+    )
+    use_winq: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to apply WinQ acceleration wrapper (noise injection + periodic weight reset)."}
+    )
+    winq_sigma: Optional[float] = field(
+        default=1e-3,
+        metadata={"help": "Standard deviation of Gaussian noise for WinQ noise injection."}
+    )
+    winq_alpha: Optional[float] = field(
+        default=0.3,
+        metadata={"help": "Interpolation coefficient for WinQ periodic weight re-initialization."}
+    )
+    winq_reset_interval: Optional[int] = field(
+        default=40000,
+        metadata={"help": "Number of steps between WinQ weight resets."}
+    )
 '''  
     use_lsq_weight: Optional[bool] = field(
         default=False,
