@@ -1,6 +1,6 @@
-CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
+CUDA_VISIBLE_DEVICES=0,1,2,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
 --use_stableqat False \
---use_robusttraining False \
+--use_robusttraining True \
 --w_bits 4 \
 --a_bits 4 \
 --weight_asymmetric False \
@@ -14,8 +14,8 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --do_train True \
 --do_eval False \
 --eval_strategy "no" \
---use_muon True \
---learning_rate 2e-3 \
+--use_muon False \
+--learning_rate 5e-5 \
 --adamw_learning_rate 1e-5 \
 --train_lm_head_embed False \
 --train_rmsnorm False \

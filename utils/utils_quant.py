@@ -109,12 +109,14 @@ class QuantizeLinear(nn.Linear):
     @classmethod
     def from_linear(
         cls,
-        linear: nn.Linear, 
+        linear: nn.Linear,
+        *args,
         w_bits=16,
         a_bits=16,
         weight_asymmetric=False,
         act_asymmetric=True,
         use_stableqat=False,
+        **kwargs
     ):
         quant_linear = cls(in_features=linear.in_features, out_features=linear.out_features, bias=linear.bias is not None,
                            w_bits=w_bits, a_bits=a_bits, weight_asymmetric=weight_asymmetric, act_asymmetric=act_asymmetric,
@@ -203,7 +205,9 @@ class RobustTrainingQuantizeLinear(QuantizeLinear):
         x_hat = sg * q
         return x_hat
 
-    def __init__(self, lambda_, *args, **kwargs):
+    def __init__(self, *args, lambda_=None, **kwargs):
+        if lambda_ is None:
+            raise ValueError("lambda_ must be provided for RobustTrainingQuantizeLinear.")
         super().__init__(*args, **kwargs)
         self.lambda_ = lambda_
 
@@ -214,9 +218,24 @@ class RobustTrainingQuantizeLinear(QuantizeLinear):
         return output
     
     @classmethod
-    def from_linear(cls, lambda_, *args, **kwargs):
-        return cls(lambda_, *args, **kwargs)
-    
+    def from_linear(
+        cls,
+        linear: nn.Linear,
+        *args,
+        w_bits=16,
+        a_bits=16,
+        weight_asymmetric=False,
+        act_asymmetric=True,
+        lambda_=None,
+        **kwargs
+    ):
+        quant_linear = cls(in_features=linear.in_features, out_features=linear.out_features, bias=linear.bias is not None,
+                           w_bits=w_bits, a_bits=a_bits, weight_asymmetric=weight_asymmetric, act_asymmetric=act_asymmetric,
+                           lambda_=lambda_)
+        quant_linear.weight = linear.weight
+        if linear.bias is not None:
+            quant_linear.bias = linear.bias
+        return quant_linear
 
 
 
