@@ -127,6 +127,7 @@ def train():
             act_asymmetric=model_args.act_asymmetric,
             skip_keywords=["lm_head", "embed"],
             use_stableqat=training_args.use_stableqat,
+            use_robusttraining=training_args.use_robusttraining
         )
 
         '''

@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 
 
+
 class DynamicQuantize(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, num_bits, asymmetric=False, sine_amplitude=None):
@@ -130,27 +131,34 @@ def replace_linear_with_quantized(
     weight_asymmetric: bool = False,
     act_asymmetric: bool = True,
     skip_keywords: list = ["lm_head", "embed"], # skip replacing Linear layers that contain these keywords in their names
-    use_stableqat: bool = False
+    use_stableqat: bool = False,
+    use_robusttraining: bool = False,
+    robusttraining_lambda_: float = 0.01
 ):
     if w_bits >= 16 and a_bits >= 16:
         raise ValueError("Both w_bits and a_bits are >= 16, no need to replace Linear with QuantizeLinear.")
     
+    replace_class = QuantizeLinear
+    if use_robusttraining:
+        replace_class = RobustTrainingQuantizeLinear
+    
     replace_count = 0
     for name, module in model.named_modules():
-        if isinstance(module, nn.Linear) and not isinstance(module, QuantizeLinear):
+        if isinstance(module, nn.Linear) and not isinstance(module, replace_class):
             if any(kw in name for kw in skip_keywords):
                 continue
-            _set_module_by_name(model, name, QuantizeLinear.from_linear(
+            _set_module_by_name(model, name, replace_class.from_linear(
                 module, 
                 w_bits=w_bits, 
                 a_bits=a_bits, 
                 weight_asymmetric=weight_asymmetric, 
                 act_asymmetric=act_asymmetric, 
-                use_stableqat=use_stableqat
+                use_stableqat=use_stableqat,
+                lambda_=robusttraining_lambda_
             ))
             replace_count += 1
     
-    print(f"[ParetoQ] Replaced {replace_count} nn.Linear with QuantizeLinear.")
+    print(f"{replace_count} nn.Linear replaced with {replace_class.__name__}.")
     return model
 
 def _set_module_by_name(model: nn.Module, name: str, new_module: nn.Module):
@@ -159,6 +167,56 @@ def _set_module_by_name(model: nn.Module, name: str, new_module: nn.Module):
     for part in parts[:-1]:
         parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
     setattr(parent, parts[-1], new_module)
+
+
+class RobustTrainingQuantizeLinear(QuantizeLinear):
+    @staticmethod
+    def robust_training_quantize(input, num_bits, lambda_, asymmetric=False):
+        if num_bits >= 16:
+            return input
+        
+        if asymmetric:
+            Qn, Qp = 0, 2**num_bits - 1
+            max_val, min_val = torch.max(input, dim=-1, keepdim=True)[0], torch.min(input, dim=-1, keepdim=True)[0]
+            sf = (max_val - min_val) / (Qp - Qn)
+            sf = torch.clamp(sf, min=1e-5).detach()
+            scaled = (input - min_val) / sf
+            q = scaled + (torch.round(scaled) - scaled).detach()
+
+            x_mean = torch.mean(input, dim=-1, keepdim=True)
+            q_mean = torch.mean(q, dim=-1, keepdim=True)
+            x_centered = (input - x_mean).detach()
+            q_centered = q - q_mean
+            Cov_xq = torch.mean(x_centered * q_centered, dim=-1, keepdim=True)
+            Var_q = torch.mean(q_centered * q_centered, dim=-1, keepdim=True)
+            sg = Cov_xq / (Var_q + lambda_)
+            x_hat = sg * (q - q_mean) + x_mean
+            return x_hat
+        
+        Qn, Qp = -2**(num_bits - 1), 2**(num_bits - 1) - 1
+        abs_max = torch.max(torch.abs(input), dim=-1, keepdim=True)[0]
+        sf = abs_max / Qp
+        sf = torch.clamp(sf, min=1e-5).detach()
+        scaled = input / sf
+        q = scaled + (torch.round(scaled) - scaled).detach()
+        sg = torch.mean(input.detach() * q, dim=-1, keepdim=True) / (torch.mean(q * q, dim=-1, keepdim=True) + lambda_)
+        x_hat = sg * q
+        return x_hat
+
+    def __init__(self, lambda_, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lambda_ = lambda_
+
+    def forward(self, input):
+        input = self.robust_training_quantize(input, self.a_bits, self.lambda_, self.act_asymmetric)
+        weight = self.robust_training_quantize(self.weight, self.w_bits, self.lambda_, self.weight_asymmetric)
+        output = nn.functional.linear(input, weight, self.bias)
+        return output
+    
+    @classmethod
+    def from_linear(cls, lambda_, *args, **kwargs):
+        return cls(lambda_, *args, **kwargs)
+    
 
 
 

@@ -131,6 +131,10 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to enable StableQAT (Fourier surrogate gradient) during QAT."}
     )
+    use_robusttraining: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use RobustTrainingQuantizeLinear for weight quantization during QAT."}
+    )
 '''  
     use_lsq_weight: Optional[bool] = field(
         default=False,

@@ -1,5 +1,6 @@
 CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
 --use_stableqat False \
+--use_robusttraining False \
 --w_bits 4 \
 --a_bits 4 \
 --weight_asymmetric False \
