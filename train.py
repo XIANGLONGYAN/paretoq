@@ -119,16 +119,28 @@ def train():
     )
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
-        model = replace_linear_with_quantized(
-            model,
-            w_bits=model_args.w_bits,
-            a_bits=model_args.a_bits,
-            weight_asymmetric=model_args.weight_asymmetric,
-            act_asymmetric=model_args.act_asymmetric,
-            skip_keywords=["lm_head", "embed"],
-            use_stableqat=training_args.use_stableqat,
-            use_robusttraining=training_args.use_robusttraining
-        )
+        if training_args.use_quest:
+            from utils.utils_quest import replace_linear_with_quest
+            model = replace_linear_with_quest(
+                model,
+                w_bits=model_args.w_bits,
+                a_bits=model_args.a_bits,
+                hadamard_block_size=training_args.quest_hadamard_block_size,
+                trust_scale_weight=training_args.quest_trust_scale_weight,
+                trust_scale_act=training_args.quest_trust_scale_act,
+                skip_keywords=["lm_head", "embed"],
+            )
+        else:
+            model = replace_linear_with_quantized(
+                model,
+                w_bits=model_args.w_bits,
+                a_bits=model_args.a_bits,
+                weight_asymmetric=model_args.weight_asymmetric,
+                act_asymmetric=model_args.act_asymmetric,
+                skip_keywords=["lm_head", "embed"],
+                use_stableqat=training_args.use_stableqat,
+                use_robusttraining=training_args.use_robusttraining
+            )
 
         '''
         if not model_args.contain_weight_clip_val:

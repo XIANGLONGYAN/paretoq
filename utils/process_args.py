@@ -135,6 +135,22 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to use RobustTrainingQuantizeLinear for weight quantization during QAT."}
     )
+    use_quest: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use QuEST (Hadamard + Trust Gradient) quantization during QAT."}
+    )
+    quest_hadamard_block_size: Optional[int] = field(
+        default=128,
+        metadata={"help": "Block size for QuEST Hadamard transform (must be power of 2)."}
+    )
+    quest_trust_scale_weight: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Trust threshold multiplier for weight quantization in QuEST."}
+    )
+    quest_trust_scale_act: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "Trust threshold multiplier for activation quantization in QuEST."}
+    )
 '''  
     use_lsq_weight: Optional[bool] = field(
         default=False,
