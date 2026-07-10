@@ -125,10 +125,10 @@ class ThermoQuantizer(nn.Module):
             qx_norm = torch.sum(prob * codebook, dim=-1)
             qx = (qx_norm / scales).to(dtype=x.dtype)
         else:
-            # Hard quantization with STE
-            qx = x_norm.round().clamp(-1, 1) / scales
-            if is_training:
-                qx = reshaped_x + (qx - reshaped_x).detach()
+            # Hard quantization
+            min_val, max_val = codebook[0], codebook[-1]
+            qx_norm = x_norm.round().clamp(min_val, max_val)
+            qx = qx_norm / scales
 
         # Convex interpolation: W_eff = (1-p) * W + p * W_quantized
         if pressure >= 1.0:
@@ -331,9 +331,9 @@ class HestiaLinear(nn.Linear):
             anneal_ratio=anneal_ratio,
             temp_scale=temp_scale,
         )
-        hestia_linear.weight.data.copy_(linear.weight.data)
+        hestia_linear.weight = linear.weight
         if linear.bias is not None:
-            hestia_linear.bias.data.copy_(linear.bias.data)
+            hestia_linear.bias = linear.bias
         return hestia_linear
 
 
@@ -359,7 +359,7 @@ def replace_linear_with_hestia(
     end_temp: float = 0.0,
     anneal_ratio: float = 0.8,
     temp_scales_dict: Optional[Dict[str, float]] = None,
-    skip_keywords: Optional[List[str]] = None,
+    skip_keywords: Optional[List[str]] = ["lm_head", "embed"],
     total_train_steps: Optional[int] = None,
 ):
     """
@@ -383,9 +383,6 @@ def replace_linear_with_hestia(
     """
     global _hestia_quant_layers
     _hestia_quant_layers = []
-
-    if skip_keywords is None:
-        skip_keywords = ["lm_head", "embed"]
 
     layer_counter = [0]
 
