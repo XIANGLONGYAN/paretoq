@@ -255,6 +255,8 @@ def train():
         valid_data = None
 
     model.config.use_cache = False
+    model.enable_input_require_grads()
+
     myTrainer = MuonTrainer
     trainer = myTrainer(
         model=model,
