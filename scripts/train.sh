@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=0,1,2,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
+CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29518 train.py \
 --use_stableqat False \
 --use_robusttraining False \
 --use_quest True \

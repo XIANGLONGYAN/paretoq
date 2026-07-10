@@ -235,9 +235,9 @@ class QuestQuantizeLinear(nn.Linear):
             trust_scale_weight=trust_scale_weight,
             trust_scale_act=trust_scale_act,
         )
-        quest_linear.weight.data.copy_(linear.weight.data)
+        quest_linear.weight = linear.weight
         if linear.bias is not None:
-            quest_linear.bias.data.copy_(linear.bias.data)
+            quest_linear.bias = linear.bias
         return quest_linear
 
 

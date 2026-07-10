@@ -2,12 +2,28 @@
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
-
-CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29519 train.py \
+CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29519 train.py \
+--use_stableqat False \
+--use_robusttraining False \
+--use_quest True \
+--quest_hadamard_block_size 128 \
+--quest_trust_scale_weight 1.0 \
+--quest_trust_scale_act 1.0 \
+--use_hestia False \
+--hestia_compress_ratio 0.2 \
+--hestia_init_temp 1.0 \
+--hestia_end_temp 0.0 \
+--hestia_anneal_ratio 0.8 \
+--hestia_group_size 0 \
+--hestia_calib_samples 0 \
+--use_winq False \
+--winq_sigma 1e-3 \
+--winq_alpha 0.3 \
+--winq_reset_interval 40000 \
 --w_bits 4 \
 --a_bits 4 \
---use_asymmetric_act True \
---contain_weight_clip_val True \
+--weight_asymmetric False \
+--act_asymmetric True \
 --local_dir "/home/jiaqichen/data2/paretoq" \
 --input_model_filename "/home/jiaqichen/data2/paretoq/models/1B-finetuned-4bit" \
 --output_model_filename "1B-finetuned-4bit" \
@@ -17,8 +33,8 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --do_train False \
 --do_eval False \
 --eval_strategy "no" \
---use_muon True \
---learning_rate 2e-3 \
+--use_muon False \
+--learning_rate 5e-5 \
 --adamw_learning_rate 1e-5 \
 --train_lm_head_embed False \
 --train_rmsnorm False \
@@ -34,6 +50,7 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --gradient_accumulation_steps 1 \
 --save_strategy "steps" \
 --save_steps 2000 \
+--report_to "wandb" \
 --save_total_limit 1 \
 --weight_decay 0. \
 --warmup_ratio 0. \
@@ -48,16 +65,4 @@ CUDA_VISIBLE_DEVICES=2,3,5,6 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --eval_ppl \
 --eval_lm_eval \
 --tasks "piqa,hellaswag,winogrande,arc_easy,arc_challenge" \
---eval_batch_size 64 \
---use_lsq_weight False \
---use_lsq_activation False \
---use_stableqat False \
---use_dsq_weight False \
---use_dsq_activation False \
---dsq_init_alpha 0.2 \
---dsq_alpha_lambda 1e-4 \
---use_daq_weight False \
---use_daq_activation False \
---daq_gamma 2.0 \
---daq_sigma_k_weight 1.0 \
---daq_sigma_k_act 2.0
+--eval_batch_size 64 
