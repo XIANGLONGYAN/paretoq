@@ -122,18 +122,9 @@ def train():
         if training_args.use_hestia:
             # --- Hestia path ---
             from utils.utils_hestia import replace_linear_with_hestia, _set_hestia_total_steps
-            # Step 1: Replace layers (no temp_scales yet)
-            model = replace_linear_with_hestia(
-                model,
-                bits=model_args.w_bits,
-                group_size=training_args.hestia_group_size,
-                compress_ratio=training_args.hestia_compress_ratio,
-                init_temp=training_args.hestia_init_temp,
-                end_temp=training_args.hestia_end_temp,
-                anneal_ratio=training_args.hestia_anneal_ratio,
-                skip_keywords=["lm_head", "embed"],
-            )
-            # Step 2: Optional Hessian calibration
+
+            temp_scales = None
+
             if training_args.hestia_calib_samples > 0:
                 from utils.utils_hestia_calib import calibrate_hestia
                 from torch.utils.data import DataLoader
@@ -148,20 +139,19 @@ def train():
                     num_samples=training_args.hestia_calib_samples,
                     device="cuda",
                 )
-                # Re-replace with temp_scales
-                from utils.utils_hestia import replace_linear_with_hestia as _re_hestia
-                model = _re_hestia(
-                    model,
-                    bits=model_args.w_bits,
-                    group_size=training_args.hestia_group_size,
-                    compress_ratio=training_args.hestia_compress_ratio,
-                    init_temp=training_args.hestia_init_temp,
-                    end_temp=training_args.hestia_end_temp,
-                    anneal_ratio=training_args.hestia_anneal_ratio,
-                    temp_scales_dict=temp_scales,
-                    skip_keywords=["lm_head", "embed"],
-                )
-            # Step 3: Set total steps (will be refined after trainer init)
+
+            model = replace_linear_with_hestia(
+                model,
+                bits=model_args.w_bits,
+                group_size=training_args.hestia_group_size,
+                compress_ratio=training_args.hestia_compress_ratio,
+                init_temp=training_args.hestia_init_temp,
+                end_temp=training_args.hestia_end_temp,
+                anneal_ratio=training_args.hestia_anneal_ratio,
+                temp_scales_dict=temp_scales,
+                skip_keywords=["lm_head", "embed"],
+            )
+
             _set_hestia_total_steps(training_args.max_steps)
         elif training_args.use_quest:
             from utils.utils_quest import replace_linear_with_quest
