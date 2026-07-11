@@ -42,7 +42,7 @@ CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --output_dir /home/jiaqichen/data2/paretoq/output/4bit_finetune \
 --num_train_epochs 1 \
 --per_device_train_batch_size 2 \
---per_device_eval_batch_size 1 \
+--per_device_eval_batch_size 2 \
 --gradient_accumulation_steps 1 \
 --save_strategy "steps" \
 --save_steps 2000 \

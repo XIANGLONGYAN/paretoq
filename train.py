@@ -106,10 +106,19 @@ class MuonTrainer(Trainer):
 def train():
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args, eval_args = process_args()
+    
+    transformers.set_seed(training_args.seed)
+    torch.cuda.manual_seed_all(training_args.seed)
 
-    log.info("Start to load model...")
     dtype = torch.bfloat16 if training_args.bf16 else torch.float
 
+    skip_keywords = []
+
+    if not training_args.train_lm_head_embed:
+        skip_keywords.extend(['lm_head', 'embed'])
+        log.info("lm_head and embed will be skipped.")
+
+    log.info("Start to load model...")
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=model_args.input_model_filename,
         cache_dir=training_args.cache_dir,
@@ -117,14 +126,57 @@ def train():
         low_cpu_mem_usage=True,
         device_map='cpu',
     )
+    log.info("Complete model loading...")
+
+    log.info("Start to load tokenizer...")
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        pretrained_model_name_or_path=model_args.input_model_filename,
+        cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right",
+        add_bos_token=False,
+        add_eos_token=False,
+    )
+    log.info("Complete tokenizer loading...")
+
+    train_data, valid_data = None, None
+
+    if training_args.do_train or training_args.do_eval:
+        import os
+        # Create a sanitised model name to avoid vocabulary collision across different models
+        model_safe_name = model_args.input_model_filename.replace("/", "_").replace("\\", "_")
+        # Get dataset name and append max_train_tokens to avoid cache collision
+        dataset_safe_name = os.path.basename(data_args.train_data_local_path).replace(".jsonl", "")
+        if data_args.max_train_tokens is not None:
+            dataset_folder = f"{dataset_safe_name}_tokens_{data_args.max_train_tokens}"
+        else:
+            dataset_folder = f"{dataset_safe_name}_all"
+        cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name, dataset_folder)
+
+        train_bin, valid_bin = datautils.preprocess_jsonl_to_bin_split(
+            train_path=data_args.train_data_local_path,
+            valid_path=data_args.eval_data_local_path
+            if data_args.eval_data_local_path is not None
+            else None,
+            cache_dir=cache_dir,
+            tokenizer=tokenizer,
+            max_train_tokens=data_args.max_train_tokens
+        )
+
+        train_data = datautils.CustomBinDataset(
+            train_bin, block_size=training_args.model_max_length
+        )
+        valid_data = datautils.CustomBinDataset(
+            valid_bin, block_size=training_args.model_max_length
+        )
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
         if training_args.use_hestia:
             # --- Hestia path ---
             from utils.utils_hestia import replace_linear_with_hestia, _set_hestia_total_steps
 
+            # Step 1: Optional Hessian calibration (on raw nn.Linear, before replacement)
             temp_scales = None
-
             if training_args.hestia_calib_samples > 0:
                 from utils.utils_hestia_calib import calibrate_hestia
                 from torch.utils.data import DataLoader
@@ -138,8 +190,10 @@ def train():
                     model, calib_loader,
                     num_samples=training_args.hestia_calib_samples,
                     device="cuda",
+                    skip_keywords=skip_keywords,
                 )
 
+            # Step 2: Replace layers (with temp_scales if calibrated)
             model = replace_linear_with_hestia(
                 model,
                 bits=model_args.w_bits,
@@ -149,7 +203,7 @@ def train():
                 end_temp=training_args.hestia_end_temp,
                 anneal_ratio=training_args.hestia_anneal_ratio,
                 temp_scales_dict=temp_scales,
-                skip_keywords=["lm_head", "embed"],
+                skip_keywords=skip_keywords,
             )
 
             _set_hestia_total_steps(training_args.max_steps)
@@ -162,7 +216,7 @@ def train():
                 hadamard_block_size=training_args.quest_hadamard_block_size,
                 trust_scale_weight=training_args.quest_trust_scale_weight,
                 trust_scale_act=training_args.quest_trust_scale_act,
-                skip_keywords=["lm_head", "embed"],
+                skip_keywords=skip_keywords,
             )
         else:
             model = replace_linear_with_quantized(
@@ -171,7 +225,7 @@ def train():
                 a_bits=model_args.a_bits,
                 weight_asymmetric=model_args.weight_asymmetric,
                 act_asymmetric=model_args.act_asymmetric,
-                skip_keywords=["lm_head", "embed"],
+                skip_keywords=skip_keywords,
                 use_stableqat=training_args.use_stableqat,
                 use_robusttraining=training_args.use_robusttraining
             )
@@ -211,48 +265,7 @@ def train():
             if "layernorm" in name or "norm.weight" in name:
                 param.requires_grad = False
 
-    log.info("Start to load tokenizer...")
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path=model_args.input_model_filename,
-        cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-        add_bos_token=False,
-        add_eos_token=False,
-    )
-    log.info("Complete tokenizer loading...")
 
-    if training_args.do_train or training_args.do_eval:
-        import os
-        # Create a sanitised model name to avoid vocabulary collision across different models
-        model_safe_name = model_args.input_model_filename.replace("/", "_").replace("\\", "_")
-        # Get dataset name and append max_train_tokens to avoid cache collision
-        dataset_safe_name = os.path.basename(data_args.train_data_local_path).replace(".jsonl", "")
-        if data_args.max_train_tokens is not None:
-            dataset_folder = f"{dataset_safe_name}_tokens_{data_args.max_train_tokens}"
-        else:
-            dataset_folder = f"{dataset_safe_name}_all"
-        cache_dir = os.path.join(model_args.local_dir, "dataset_cache", model_safe_name, dataset_folder)
-
-        train_bin, valid_bin = datautils.preprocess_jsonl_to_bin_split(
-            train_path=data_args.train_data_local_path,
-            valid_path=data_args.eval_data_local_path
-            if data_args.eval_data_local_path is not None
-            else None,
-            cache_dir=cache_dir,
-            tokenizer=tokenizer,
-            max_train_tokens=data_args.max_train_tokens
-        )
-
-        train_data = datautils.CustomBinDataset(
-            train_bin, block_size=training_args.model_max_length
-        )
-        valid_data = datautils.CustomBinDataset(
-            valid_bin, block_size=min(training_args.model_max_length, 1024)
-        )
-    else:
-        train_data = None
-        valid_data = None
 
     model.config.use_cache = False
     model.enable_input_require_grads()

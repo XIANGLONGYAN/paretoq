@@ -1,5 +1,5 @@
 ﻿"""
-HESTIA — Optional Hessian Calibration (Hutch++)
+HESTIA -> Optional Hessian Calibration (Hutch++)
 
 Computes per-layer sensitivity scores via Hessian trace approximation
 using the Hutch++ algorithm, then converts them to temperature scaling
@@ -137,28 +137,34 @@ def calibrate_hestia(
     num_query: int = 10,
     device: str = "cuda",
     alpha: float = 1.0,
+    skip_keywords: Optional[List[str]] = None,
 ) -> Dict[str, float]:
     """
     Run Hutch++ Hessian trace calibration and return per-layer temperature scales.
 
     Args:
-        model:        model with HestiaLinear layers already replaced
+        model:        model with raw nn.Linear layers (calibration runs BEFORE replacement)
         dataloader:   calibration data loader (yields dict with "input_ids")
         num_samples:  number of calibration samples to process
         num_sketch:   Hutch++ sketch dimension
         num_query:    Hutch++ query dimension (residual phase)
         device:       compute device
-        alpha:        temperature scaling strength (higher = more differentiation)
+        alpha:          temperature scaling strength (higher = more differentiation)
+        skip_keywords:  layer name substrings to skip (e.g. ["lm_head", "embed"])
 
     Returns:
-        dict mapping layer_id → temp_scale (float)
+        dict mapping layer_id -> temp_scale (float)
     """
-    # Collect HestiaLinear layers and create Hutch++ states
+    # Collect nn.Linear layers (skip frozen / excluded layers)
+    if skip_keywords is None:
+        skip_keywords = []
     layer_params = []
     hutch_states = []
 
     for name, module in model.named_modules():
-        if module.__class__.__name__ == "HestiaLinear":
+        if any(kw in name for kw in skip_keywords):
+            continue
+        if isinstance(module, nn.Linear):
             param = module.weight
             numel = param.numel()
             layer_params.append((name, param))
@@ -167,7 +173,7 @@ def calibrate_hestia(
             )
 
     if len(layer_params) == 0:
-        print("[Hestia Calib] No HestiaLinear layers found — skipping calibration")
+        print("[Hestia Calib] No nn.Linear layers found, skipping calibration")
         return {}
 
     print(f"[Hestia Calib] Calibrating {len(layer_params)} layers "
@@ -281,10 +287,10 @@ def calibrate_hestia(
     temp_scales = {}
     for i, (name, _) in enumerate(layer_params):
         layer_id = f"layer_{i}"
-        # Standardized sigmoid → [0, 1], then scale by alpha
+        # Standardized sigmoid -> [0, 1], then scale by alpha
         z = alpha * (log_traces[i] - mean_log) / std_log
         s_i = 1.0 / (1.0 + math.exp(-z))
-        # temp_scale = exp(beta * s_i); higher sensitivity → higher temp → slower cooling
+        # temp_scale = exp(beta * s_i); higher sensitivity -> higher temp -> slower cooling
         temp_scale = math.exp(s_i)
         temp_scales[layer_id] = temp_scale
 
