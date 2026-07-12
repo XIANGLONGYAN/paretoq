@@ -181,13 +181,13 @@ class RobustTrainingQuantizeLinear(QuantizeLinear):
             Qn, Qp = 0, 2**num_bits - 1
             max_val, min_val = torch.max(input, dim=-1, keepdim=True)[0], torch.min(input, dim=-1, keepdim=True)[0]
             sf = (max_val - min_val) / (Qp - Qn)
-            sf = torch.clamp(sf, min=1e-5).detach()
+            sf = torch.clamp(sf, min=1e-5)
             scaled = (input - min_val) / sf
             q = scaled + (torch.round(scaled) - scaled).detach()
 
             x_mean = torch.mean(input, dim=-1, keepdim=True)
             q_mean = torch.mean(q, dim=-1, keepdim=True)
-            x_centered = (input - x_mean).detach()
+            x_centered = input - x_mean
             q_centered = q - q_mean
             Cov_xq = torch.mean(x_centered * q_centered, dim=-1, keepdim=True)
             Var_q = torch.mean(q_centered * q_centered, dim=-1, keepdim=True)
@@ -198,10 +198,10 @@ class RobustTrainingQuantizeLinear(QuantizeLinear):
         Qn, Qp = -2**(num_bits - 1), 2**(num_bits - 1) - 1
         abs_max = torch.max(torch.abs(input), dim=-1, keepdim=True)[0]
         sf = abs_max / Qp
-        sf = torch.clamp(sf, min=1e-5).detach()
+        sf = torch.clamp(sf, min=1e-5)
         scaled = input / sf
         q = scaled + (torch.round(scaled) - scaled).detach()
-        sg = torch.mean(input.detach() * q, dim=-1, keepdim=True) / (torch.mean(q * q, dim=-1, keepdim=True) + lambda_)
+        sg = torch.mean(input * q, dim=-1, keepdim=True) / (torch.mean(q * q, dim=-1, keepdim=True) + lambda_)
         x_hat = sg * q
         return x_hat
 
