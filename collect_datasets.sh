@@ -107,15 +107,15 @@ download_and_generate() {
 
 # --- [1] wikitext2 ---
 # 包含 train, test 划分
-download_and_generate "wikitext" "wikitext-2-raw-v1" "train"
-download_and_generate "wikitext" "wikitext-2-raw-v1" "test"
+# download_and_generate "wikitext" "wikitext-2-raw-v1" "train"
+# download_and_generate "wikitext" "wikitext-2-raw-v1" "test"
 
 # --- [2] c4 (allenai/c4) ---
 # c4 数据集极其庞大，通常使用 en 语言子集。
 # 强烈建议在此设置合适的最大样本数（例如 50000 样本用于训练，10000 样本用于验证/评估）
 # 如果需要获取完整无限制的数据，请把第四个参数删掉或设为空
-download_and_generate "allenai/c4" "en" "train" # 50000
-download_and_generate "allenai/c4" "en" "validation" # 10000
+# download_and_generate "allenai/c4" "en" "train" # 50000
+# download_and_generate "allenai/c4" "en" "validation" # 10000
 
 # --- [3] Fineweb-edu (HuggingFaceFW/fineweb-edu) ---
 # 常用子集为 sample-10BT，主要包含 train 划分
@@ -132,12 +132,12 @@ download_and_generate "HuggingFaceFW/fineweb-edu" "sample-10BT" "train" # 50000
 
 # --- [6] Ultra-FineWeb (openbmb/Ultra-FineWeb) ---
 # 包含 en (英语) 和 zh (中文) 划分。这里默认下载 en 划分。
-download_and_generate "openbmb/Ultra-FineWeb" "None" "en" "" "content"
+# download_and_generate "openbmb/Ultra-FineWeb" "None" "en" "" "content"
 
 # --- [7] wikitext103 ---
 # 包含 train, test, validation 划分
-download_and_generate "wikitext" "wikitext-103-raw-v1" "train"
-download_and_generate "wikitext" "wikitext-103-raw-v1" "test"
+# download_and_generate "wikitext" "wikitext-103-raw-v1" "train"
+# download_and_generate "wikitext" "wikitext-103-raw-v1" "test"
 
 echo ""
 echo "=============================================================="

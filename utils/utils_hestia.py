@@ -13,6 +13,7 @@ The scheduler runs three phases:
   - Solid:     pure discrete quantization (τ = 0, p = 1)
 """
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -125,10 +126,10 @@ class ThermoQuantizer(nn.Module):
             qx_norm = torch.sum(prob * codebook, dim=-1)
             qx = (qx_norm / scales).to(dtype=x.dtype)
         else:
-            # Hard quantization
-            min_val, max_val = codebook[0], codebook[-1]
-            qx_norm = x_norm.round().clamp(min_val, max_val)
-            qx = qx_norm / scales
+            # Hard quantization (temp = 0)
+            qx = x_norm.round().clamp(-1, 1) / scales
+            if is_training:
+                qx = reshaped_x + qx - reshaped_x.detach()
 
         # Convex interpolation: W_eff = (1-p) * W + p * W_quantized
         if pressure >= 1.0:
@@ -180,6 +181,8 @@ class ThermoScheduler:
         anneal_ratio: float = 0.8,
         temp_scale: Optional[float] = None,
     ):
+        if end_temp != 0.0:
+            raise NotImplementedError(f"end_temp != 0.0 has not been implemented")
         self.total_steps: Optional[int] = None
         self.compress_ratio = compress_ratio
         self.init_temp = init_temp
@@ -200,29 +203,23 @@ class ThermoScheduler:
 
     def get_temp(self, cur_step: int) -> float:
         assert self.total_steps is not None
-        ratio = cur_step / self.total_steps
-        # Phase 1: constant init_temp
-        if ratio < self.compress_ratio:
-            base_temp = self.init_temp
-        # Phase 2: anneal
-        elif ratio < (self.compress_ratio + self.anneal_ratio):
-            anneal_progress = (ratio - self.compress_ratio) / self.anneal_ratio
-            if self.temp_decay_style == "cosine":
-                base_temp = self.end_temp + 0.5 * (self.init_temp - self.end_temp) * (
-                    1.0 + torch.cos(torch.tensor(anneal_progress * torch.pi)).item()
-                )
-            elif self.temp_decay_style == "linear":
-                base_temp = self.init_temp + (self.end_temp - self.init_temp) * anneal_progress
-            else:
-                base_temp = self.init_temp + (self.end_temp - self.init_temp) * anneal_progress
-        else:
-            base_temp = self.end_temp
 
-        # Apply per-layer scaling
+        cur_ratio = cur_step / self.total_steps
+        const_temp_ratio = 1.0 - self.anneal_ratio
+
+        if cur_ratio <= const_temp_ratio:
+            eff_temp = self.init_temp
+        
+        elif self.temp_dacay_style == "linear":
+            eff_temp = self.init_temp * (1 - cur_ratio) / self.anneal_ratio
+        
+        elif self.temp_dacay_style == "cosine":
+            eff_temp = self.init_temp * 0.5 * (1.0 + math.cos(math.pi * (cur_ratio - const_temp_ratio) / self.anneal_ratio))
+
         if self.temp_scale is not None:
-            base_temp *= self.temp_scale
+            eff_temp *= self.temp_scale
 
-        return base_temp
+        return eff_temp
 
 
 # ============================================================================
