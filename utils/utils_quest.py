@@ -195,22 +195,24 @@ class QuestQuantizeLinear(nn.Linear):
 
     def _hadamard(self, x):
         return block_hadamard_transform(x, self.hadamard_block_size)
+    
+    def _inverse_hadmard(self, x):
+        return inverse_block_hadamard_transform(x, self.hadamard_block_size)
 
     def forward(self, input):
-        # 1. Hadamard-transform activations (along input dim)
         x_had = self._hadamard(input)
 
-        # 2. Quantize activations in Hadamard domain
         x_had_q = quest_quantize(x_had, self.a_bits, self.trust_scale_act)
 
-        # 3. Hadamard-transform weight (along input dim)
+        x_had_q_inv = self._inverse_hadmard(x_had_q)
+
         w_had = self._hadamard(self.weight)
 
-        # 4. Quantize weight in Hadamard domain
         w_had_q = quest_quantize(w_had, self.w_bits, self.trust_scale_weight)
 
-        # 5. Matmul in Hadamard domain — inner product preserved by orthogonality
-        output = F.linear(x_had_q, w_had_q, self.bias)
+        w_had_q_inv = self._inverse_hadmard(w_had_q)
+
+        output = F.linear(x_had_q_inv, w_had_q_inv, self.bias)
 
         return output
 
