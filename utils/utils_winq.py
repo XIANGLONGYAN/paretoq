@@ -168,7 +168,7 @@ class WinQCallback(TrainerCallback):
 def apply_winq_to_model(
     model: nn.Module,
     sigma: float = 1e-3,
-    alpha: float = 0.3,
+    alpha: float = 0.8,
 ) -> List[WinQLinear]:
     """
     Wrap all quantized Linear layers in the model with WinQLinear.

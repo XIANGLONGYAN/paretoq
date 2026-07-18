@@ -14,8 +14,8 @@ CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --hestia_calib_samples 0 \
 --use_winq False \
 --winq_sigma 1e-3 \
---winq_alpha 0.3 \
---winq_reset_interval 40000 \
+--winq_alpha 0.8 \
+--winq_reset_interval 200 \
 --w_bits 4 \
 --a_bits 4 \
 --weight_asymmetric False \
