@@ -186,12 +186,15 @@ def train():
                     shuffle=True,
                     collate_fn=default_data_collator,
                 )
+
+                model.to("cuda")
                 temp_scales = calibrate_hestia(
                     model, calib_loader,
                     num_samples=training_args.hestia_calib_samples,
                     device="cuda",
                     skip_keywords=skip_keywords,
                 )
+                model.to("cpu")
 
             # Step 2: Replace layers (with temp_scales if calibrated)
             model = replace_linear_with_hestia(
