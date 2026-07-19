@@ -188,12 +188,16 @@ class TrainingArguments(transformers.TrainingArguments):
         metadata={"help": "Standard deviation of Gaussian noise for WinQ noise injection."}
     )
     winq_alpha: Optional[float] = field(
-        default=0.3,
+        default=0.2,
         metadata={"help": "Interpolation coefficient for WinQ periodic weight re-initialization."}
     )
     winq_reset_interval: Optional[int] = field(
         default=40000,
         metadata={"help": "Number of steps between WinQ weight resets."}
+    )
+    use_my: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use my quantization"}
     )
 '''  
     use_lsq_weight: Optional[bool] = field(

@@ -1,7 +1,8 @@
 CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29518 train.py \
+--use_my True \
 --use_stableqat False \
 --use_robusttraining False \
---use_quest True \
+--use_quest False \
 --quest_hadamard_block_size 128 \
 --quest_trust_scale_weight 1.0 \
 --quest_trust_scale_act 1.0 \
@@ -14,8 +15,8 @@ CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --hestia_calib_samples 0 \
 --use_winq False \
 --winq_sigma 1e-3 \
---winq_alpha 0.8 \
---winq_reset_interval 200 \
+--winq_alpha 0.2 \
+--winq_reset_interval 40000 \
 --w_bits 4 \
 --a_bits 4 \
 --weight_asymmetric False \

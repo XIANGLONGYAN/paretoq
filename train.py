@@ -11,7 +11,6 @@ from transformers import AutoModelForCausalLM, default_data_collator, Trainer
 from utils import utils, datautils
 from utils.process_args import process_args
 from utils.eval import run_evaluation
-from utils.utils_quant import replace_linear_with_quantized, QuantizeLinear
 
 
 log = utils.get_logger("clm")
@@ -171,7 +170,25 @@ def train():
         )
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
-        if training_args.use_hestia:
+        if training_args.use_my:
+            from utils.utils_myquant import replace_linear_with_myquantize, ClipType
+            model = replace_linear_with_myquantize(
+                model,
+                w_bits=model_args.w_bits,
+                a_bits=model_args.a_bits,
+                w_asymmetric=False,
+                a_asymmetric=False,
+                w_group_size=0,
+                a_group_size=0,
+                w_clip_type=ClipType.GAUSSIAN,
+                a_clip_type=ClipType.GAUSSIAN,
+                use_trust_mask=False,
+                trust_scale=1.0,
+                skip_keywords=['embed', 'lm_head']
+            )
+                
+        
+        elif training_args.use_hestia:
             # --- Hestia path ---
             from utils.utils_hestia import replace_linear_with_hestia, _set_hestia_total_steps
 
@@ -219,6 +236,7 @@ def train():
                 skip_keywords=skip_keywords,
             )
         else:
+            from utils.utils_quant import replace_linear_with_quantized
             model = replace_linear_with_quantized(
                 model,
                 w_bits=model_args.w_bits,
