@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29518 train.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
 --use_my True \
 --use_stableqat False \
 --use_robusttraining False \
@@ -13,12 +13,12 @@ CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --hestia_anneal_ratio 0.8 \
 --hestia_group_size 0 \
 --hestia_calib_samples 0 \
---use_winq False \
+--use_winq True \
 --winq_sigma 1e-3 \
 --winq_alpha 0.2 \
 --winq_reset_interval 40000 \
---w_bits 4 \
---a_bits 4 \
+--w_bits 2 \
+--a_bits 16 \
 --weight_asymmetric False \
 --act_asymmetric True \
 --local_dir "/home/jiaqichen/data2/paretoq" \
@@ -44,7 +44,7 @@ CUDA_VISIBLE_DEVICES=1,7 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --num_train_epochs 1 \
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 2 \
---gradient_accumulation_steps 1 \
+--gradient_accumulation_steps 2 \
 --save_strategy "steps" \
 --save_steps 2000 \
 --report_to "wandb" \

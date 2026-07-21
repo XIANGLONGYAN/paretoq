@@ -39,7 +39,7 @@ class ClipType(Enum):
     GAUSSIAN = 'gaussian'
 
 
-class MyQuantizer(nn.Modular):
+class MyQuantizer(nn.Module):
     def __init__(
         self, 
         num_bits, 

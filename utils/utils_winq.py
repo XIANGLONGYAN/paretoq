@@ -168,7 +168,7 @@ class WinQCallback(TrainerCallback):
 def apply_winq_to_model(
     model: nn.Module,
     sigma: float = 1e-3,
-    alpha: float = 0.8,
+    alpha: float = 0.2,
 ) -> List[WinQLinear]:
     """
     Wrap all quantized Linear layers in the model with WinQLinear.
@@ -189,22 +189,28 @@ def apply_winq_to_model(
     """
     winq_layers: List[WinQLinear] = []
 
-    # Target classes that WinQ can wrap
-    from utils.utils_quant import QuantizeLinear
-
-    # Try importing optional types
     try:
-        from utils.utils_quest import QuestQuantizeLinear as _QQL
+        from utils.utils_myquant import MyQuantizeLinear
     except ImportError:
-        _QQL = type(None)
+        MyQuantizeLinear = type(None)
 
     try:
-        from utils.utils_hestia import HestiaLinear as _HL
+        from utils.utils_quant import QuantizeLinear
     except ImportError:
-        _HL = type(None)
+        QuantizeLinear = type(None)
+
+    try:
+        from utils.utils_quest import QuestQuantizeLinear
+    except ImportError:
+        QuestQuantizeLinear = type(None)
+
+    try:
+        from utils.utils_hestia import HestiaLinear
+    except ImportError:
+        HestiaLinear = type(None)
 
     target_types = tuple(
-        t for t in (QuantizeLinear, _QQL, _HL)
+        t for t in (MyQuantizeLinear, QuantizeLinear, QuestQuantizeLinear, HestiaLinear)
         if t is not None and t is not type(None)
     )
 
