@@ -57,6 +57,24 @@ class MyQuantizer(nn.Module):
         self.use_trust_mask = use_trust_mask
         self.trust_scale = trust_scale
 
+    def hadamard_transform(self, x):
+        H_128 = get_H_128(device=x.device, dtype=x.dtype)
+        if x.size(-1) % 128 != 0:
+            raise ValueError(f'x.size(-1) is {x.size(-1)} which cannot be divided by 128.')
+        origin_shape = x.size()
+        x_reshaped = x.reshape(-1, x.size(-1) // 128, 128)
+        x_had = x_reshaped @ H_128.T
+        return x_had.reshape(origin_shape)
+    
+    def inverse_hadamard_transform(self, x):
+        H_128 = get_H_128(device=x.device, dtype=x.dtype)
+        if x.size(-1) % 128 != 0:
+            raise ValueError(f'x.size(-1) is {x.size(-1)} which cannot be divided by 128.')
+        origin_shape = x.size()
+        x_reshaped = x.reshape(-1, x.size(-1) // 128, 128)
+        x_inv_had = x_reshaped @ H_128
+        return x_inv_had.reshape(origin_shape)
+
     def reshape_by_group_size(self, x):
         origin_shape = x.size()
         if self.group_size == 0: # Per-token
@@ -93,6 +111,8 @@ class MyQuantizer(nn.Module):
         else:
             if self.clip_type == ClipType.GAUSSIAN:
 
+                x = self.hadamard_transform(x)
+
                 alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
                 rms = (x**2).mean(dim=-1, keepdim=True).sqrt().clamp(min=1e-5)
                 scale = alpha_star * rms
@@ -103,11 +123,11 @@ class MyQuantizer(nn.Module):
 
                 if self.use_trust_mask:
                     trust_threshold = rms * self.trust_scale * alpha_star / (2**self.num_bits - 1)
-                    trust_mask = ((x - x_q).abs() <= trust_threshold).to(dtype=x.dtype).detach()  # 作者这里没有 detach，对比实验一下
+                    trust_mask = ((x - x_q).abs() <= trust_threshold).to(dtype=x.dtype)
                     x_masked = x * trust_mask
                     return x_masked + (x_q - x_masked).detach()
                 
-                return (x + (x_q - x).detach()).reshape(origin_shape)
+                return self.inverse_hadamard_transform((x + (x_q - x).detach()).reshape(origin_shape))
             
             if self.clip_type == ClipType.MEAN:
                 abs_mean = x.abs().mean(dim=-1, keepdim=True)
@@ -161,42 +181,15 @@ class MyQuantizeLinear(nn.Linear):
                             )
 
     
-    def hadamard_transform(self, x):
-        H_128 = get_H_128(device=x.device, dtype=x.dtype)
-        if x.size(-1) % 128 != 0:
-            raise ValueError(f'x.size(-1) is {x.size(-1)} which cannot be divided by 128.')
-        origin_shape = x.size()
-        x_reshaped = x.reshape(-1, x.size(-1) // 128, 128)
-        x_had = x_reshaped @ H_128.T
-        return x_had.reshape(origin_shape)
-    
-    def inverse_hadamard_transform(self, x):
-        H_128 = get_H_128(device=x.device, dtype=x.dtype)
-        if x.size(-1) % 128 != 0:
-            raise ValueError(f'x.size(-1) is {x.size(-1)} which cannot be divided by 128.')
-        origin_shape = x.size()
-        x_reshaped = x.reshape(-1, x.size(-1) // 128, 128)
-        x_inv_had = x_reshaped @ H_128
-        return x_inv_had.reshape(origin_shape)
     
     def forward(self, x):
         w = self.weight
         a = x
 
-        if self.w_quantizer.clip_type == ClipType.GAUSSIAN:
-            w = self.hadamard_transform(w)
-        if self.a_quantizer.clip_type == ClipType.GAUSSIAN:
-            a = self.hadamard_transform(a)
+        w_q = self.w_quantizer(w)
+        a_q = self.a_quantizer(a)
 
-        w = self.w_quantizer(w)
-        a = self.a_quantizer(a)
-
-        if self.w_quantizer.clip_type == ClipType.GAUSSIAN:
-            w = self.inverse_hadamard_transform(w)
-        if self.a_quantizer.clip_type == ClipType.GAUSSIAN:
-            a = self.inverse_hadamard_transform(a)
-        
-        return F.linear(a, w, self.bias)
+        return F.linear(a_q, w_q, self.bias)
       
     @classmethod
     def from_linear(

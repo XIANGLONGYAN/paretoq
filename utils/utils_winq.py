@@ -69,8 +69,9 @@ class WinQLinear(nn.Module):
         """Return the quantized version of the inner layer's weight."""
         w = self.inner.weight
         cls_name = self.inner.__class__.__name__
-
-        if cls_name == "QuantizeLinear":
+        if cls_name == "MyQuantizeLinear":
+            qw = self.inner.w_quantizer(self.inner.weight)
+        elif cls_name == "QuantizeLinear":
             # Baseline QAT quantizer
             from utils.utils_quant import DynamicQuantize
             sine_amp = getattr(self.inner, "sine_amplitude", None)
