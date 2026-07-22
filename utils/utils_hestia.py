@@ -210,10 +210,10 @@ class ThermoScheduler:
         if cur_ratio <= const_temp_ratio:
             eff_temp = self.init_temp
         
-        elif self.temp_dacay_style == "linear":
+        elif self.temp_decay_style == "linear":
             eff_temp = self.init_temp * (1 - cur_ratio) / self.anneal_ratio
         
-        elif self.temp_dacay_style == "cosine":
+        elif self.temp_decay_style == "cosine":
             eff_temp = self.init_temp * 0.5 * (1.0 + math.cos(math.pi * (cur_ratio - const_temp_ratio) / self.anneal_ratio))
 
         if self.temp_scale is not None:
