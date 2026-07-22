@@ -347,7 +347,7 @@ def main():
     print("[6/6] Running Hessian trace calibration (Hutch++)...")
     use_gc = not args.no_gradient_checkpointing
     print(f"  - Gradient checkpointing: {'enabled' if use_gc else 'disabled'}")
-    print(f"  - Max sequence length: {args.max_seq_len}")
+    print(f"  - Max sequence length: {args.model_max_length}")
     print(f"  - This may take several minutes depending on model size...")
 
     outputs = run_calibration(
@@ -358,7 +358,7 @@ def main():
         num_batches=args.num_batches,
         device=args.device,
         use_gradient_checkpointing=use_gc,
-        max_seq_len=args.max_seq_len,
+        max_seq_len=args.model_max_length,
         calibration_granularity=args.calibration_granularity
     )
 
