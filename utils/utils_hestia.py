@@ -2,15 +2,19 @@
 HESTIA: Hessian-Guided Differentiable QAT for Extremely Low-Bit LLMs
 
 Core module containing:
-  1. ThermoQuantizer  — softmax-based differentiable quantization
-  2. ThermoScheduler  — three-phase pressure/temperature schedule
+  1. HestiaQuantizer  — softmax-based differentiable quantization
+  2. HestiaScheduler  — three-phase pressure/temperature schedule
   3. HestiaLinear     — drop-in nn.Linear replacement with integrated scheduling
-  4. Global-step callback for HuggingFace Trainer integration
+  4. HestiaStepCallback — global-step updater for HuggingFace Trainer integration
 
 The scheduler runs three phases:
   - Compress:  pressure p rises from 0 to 1 (fp → quantized convex combination)
   - Anneal:    temperature τ decays (soft → hard assignments)
   - Solid:     pure discrete quantization (τ = 0, p = 1)
+
+Global state (module-level, shared across all HestiaLinear instances):
+  - global_cur_step:    current training step, updated by HestiaStepCallback
+  - global_total_steps: total planned training steps, set before training begins
 """
 
 import math
@@ -22,57 +26,28 @@ from transformers import TrainerCallback
 
 
 # ============================================================================
-# Global step tracking — shared across all HestiaLinear instances
+# Global step tracking
 # ============================================================================
-_hestia_global_step: int = 0
-_hestia_total_steps: Optional[int] = None
-_hestia_quant_layers: List["HestiaLinear"] = []
 
-
-def _set_hestia_total_steps(n: int):
-    global _hestia_total_steps
-    _hestia_total_steps = n
-    for layer in _hestia_quant_layers:
-        layer.scheduler.bind_total_steps(n)
+global_cur_step: int = 0
+global_total_steps: int = 0
 
 
 class HestiaStepCallback(TrainerCallback):
-    """HuggingFace Trainer callback: increments the global step counter each step."""
+    """HuggingFace Trainer callback: updates global_cur_step each step."""
 
     def on_step_end(self, args, state, control, **kwargs):
-        global _hestia_global_step
-        _hestia_global_step = state.global_step
+        global global_cur_step
+        global_cur_step = state.global_step
+
+
 
 
 # ============================================================================
-# Utility: reshape for group-wise quantization
+# HestiaQuantizer: Softmax-based differentiable quantization
 # ============================================================================
 
-def _reshape_for_grouping(x: torch.Tensor, group_size: int):
-    """
-    Reshape tensor for group-wise quantization.
-    - group_size > 0:  block-wise, last dim split into groups
-    - group_size == -1: per-channel (keep last dim)
-    - group_size == 0:  per-tensor (flatten all)
-    """
-    org_shape = x.shape
-    if group_size > 0:
-        assert org_shape[-1] % group_size == 0
-        x = x.reshape(-1, group_size)
-    elif group_size == -1:
-        x = x.reshape(-1, org_shape[-1])
-    elif group_size == 0:
-        x = x.reshape(1, -1)
-    else:
-        raise ValueError(f"Invalid group_size: {group_size}")
-    return x, org_shape
-
-
-# ============================================================================
-# ThermoQuantizer: Softmax-based differentiable quantization
-# ============================================================================
-
-class ThermoQuantizer(nn.Module):
+class HestiaQuantizer(nn.Module):
     """
     Differentiable quantizer using temperature-controlled softmax.
 
@@ -114,12 +89,12 @@ class ThermoQuantizer(nn.Module):
 
         codebook = self._cached_codebook
 
-        reshaped_x, org_shape = _reshape_for_grouping(x, self.group_size)
+        reshaped_x, org_shape = self._reshape_for_grouping(x, self.group_size)
         # scale α = mean(|w|), per-group
         scales = 1.0 / reshaped_x.abs().mean(dim=1, keepdim=True).clamp(min=1e-5)
         x_norm = reshaped_x * scales
 
-        if temp > 0.0:
+        if temp >= 0.0:
             # Soft quantization via Gibbs distribution
             logits = -(x_norm.unsqueeze(-1) - codebook).pow(2)
             prob = F.softmax(logits / (temp + 1e-6), dim=-1)
@@ -129,7 +104,7 @@ class ThermoQuantizer(nn.Module):
             # Hard quantization (temp = 0)
             qx = x_norm.round().clamp(-1, 1) / scales
             if is_training:
-                qx = reshaped_x + qx - reshaped_x.detach()
+                qx = reshaped_x + (qx - reshaped_x).detach()
 
         # Convex interpolation: W_eff = (1-p) * W + p * W_quantized
         if pressure >= 1.0:
@@ -139,6 +114,24 @@ class ThermoQuantizer(nn.Module):
         else:
             return torch.lerp(x, qx.reshape(org_shape), pressure)
 
+    def _reshape_for_grouping(self, x: torch.Tensor, group_size: int):
+        """
+        Reshape tensor for group-wise quantization.
+        - group_size > 0:  block-wise, last dim split into groups
+        - group_size == -1: per-channel (keep last dim)
+        - group_size == 0:  per-tensor (flatten all)
+        """
+        org_shape = x.shape
+        if group_size > 0:
+            assert org_shape[-1] % group_size == 0
+            x = x.reshape(-1, group_size)
+        elif group_size == -1:
+            x = x.reshape(-1, org_shape[-1])
+        elif group_size == 0:
+            x = x.reshape(1, -1)
+        else:
+            raise ValueError(f"Invalid group_size: {group_size}")
+        return x, org_shape
 
 def make_ternary_codebook():
     """Codebook for ternary quantization: {-1, 0, +1}."""
@@ -156,12 +149,13 @@ def make_bitwidth_codebook(bits: int, symmetric: bool = True):
 
 
 # ============================================================================
-# ThermoScheduler: pressure + temperature schedule
+# HestiaScheduler: pressure + temperature schedule
 # ============================================================================
 
-class ThermoScheduler:
+class HestiaScheduler:
     """
     Three-phase scheduler for Hestia training.
+    Reads global_cur_step and global_total_steps from module-level state.
 
     Phase 1 (Compress):  pressure ramps 0 → 1, temperature = init_temp
     Phase 2 (Anneal):    pressure = 1, temperature decays init_temp → end_temp
@@ -183,36 +177,32 @@ class ThermoScheduler:
     ):
         if end_temp != 0.0:
             raise NotImplementedError(f"end_temp != 0.0 has not been implemented")
-        self.total_steps: Optional[int] = None
         self.compress_ratio = compress_ratio
         self.init_temp = init_temp
         self.end_temp = end_temp
         self.temp_decay_style = temp_decay_style
         self.anneal_ratio = anneal_ratio
-        self.temp_scale = temp_scale  # per-layer scaling factor from Hessian calib
+        self.temp_scale = temp_scale
 
-    def bind_total_steps(self, total_steps: int):
-        self.total_steps = total_steps
-
-    def get_pressure(self, cur_step: int) -> float:
-        assert self.total_steps is not None, "bind_total_steps() must be called first"
-        ratio = cur_step / self.total_steps
+    def get_pressure(self) -> float:
+        assert global_total_steps > 0, "global_total_steps must be set before calling get_pressure()"
+        ratio = global_cur_step / global_total_steps
         if ratio < self.compress_ratio:
             return ratio / self.compress_ratio
         return 1.0
 
-    def get_temp(self, cur_step: int) -> float:
-        assert self.total_steps is not None
+    def get_temp(self) -> float:
+        assert global_total_steps > 0, "global_total_steps must be set before calling get_temp()"
 
-        cur_ratio = cur_step / self.total_steps
+        cur_ratio = global_cur_step / global_total_steps
         const_temp_ratio = 1.0 - self.anneal_ratio
 
         if cur_ratio <= const_temp_ratio:
             eff_temp = self.init_temp
-        
+
         elif self.temp_decay_style == "linear":
             eff_temp = self.init_temp * (1 - cur_ratio) / self.anneal_ratio
-        
+
         elif self.temp_decay_style == "cosine":
             eff_temp = self.init_temp * 0.5 * (1.0 + math.cos(math.pi * (cur_ratio - const_temp_ratio) / self.anneal_ratio))
 
@@ -230,7 +220,7 @@ class HestiaLinear(nn.Linear):
     """
     Linear layer with Hestia thermal quantization.
 
-    Training phases (automatic, driven by global step):
+    Training phases (automatic, driven by global_cur_step):
       1. Compress:  W_eff = lerp(W_fp, W_quant, pressure)
       2. Anneal:    W_eff = softmax_quant(W, τ)   (τ → 0)
       3. Solid:     W_eff = hard_quant(W)
@@ -243,9 +233,9 @@ class HestiaLinear(nn.Linear):
         in_features: int,
         out_features: int,
         bias: bool = False,
-        bits: int = 1,               # 1 → ternary, 2 → 2-bit, etc.
+        bits: int = 0,
         symmetric: bool = True,
-        group_size: int = 0,          # 0 = per-tensor
+        group_size: int = -1,
         compress_ratio: float = 0.2,
         init_temp: float = 1.0,
         end_temp: float = 0.0,
@@ -256,7 +246,6 @@ class HestiaLinear(nn.Linear):
         super().__init__(in_features, out_features, bias=bias)
         self.bits = bits
         self.symmetric = symmetric
-        self.group_size = group_size
         self.layer_id = layer_id
 
         # For bits >= 16 no quantization happens; skip huge codebook alloc
@@ -265,32 +254,27 @@ class HestiaLinear(nn.Linear):
             self.scheduler = None
         else:
             # Build codebook
-            if bits == 1 and symmetric:
+            if bits == 0 and symmetric:
                 codebook = make_ternary_codebook()
             else:
                 codebook = make_bitwidth_codebook(bits, symmetric)
 
-            self.quantizer = ThermoQuantizer(codebook, group_size)
-            self.scheduler = ThermoScheduler(
+            self.quantizer = HestiaQuantizer(codebook, group_size)
+            self.scheduler = HestiaScheduler(
                 compress_ratio=compress_ratio,
                 init_temp=init_temp,
                 end_temp=end_temp,
                 anneal_ratio=anneal_ratio,
                 temp_scale=temp_scale,
             )
-        self._step = 0
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        # Read global step (updated by HestiaStepCallback)
-        global _hestia_global_step, _hestia_total_steps
-
         if self.bits >= 16:
             return F.linear(input, self.weight, self.bias)
 
-        if self.training and _hestia_total_steps is not None:
-            step = _hestia_global_step
-            pressure = self.scheduler.get_pressure(step)
-            temp = self.scheduler.get_temp(step)
+        if self.training and global_total_steps > 0:
+            pressure = self.scheduler.get_pressure()
+            temp = self.scheduler.get_temp()
 
             q_weight = self.quantizer(
                 self.weight,
@@ -369,7 +353,6 @@ def replace_linear_with_hestia(
     anneal_ratio: float = 0.8,
     temp_scales_dict: Optional[Dict[str, float]] = None,
     skip_keywords: Optional[List[str]] = ["lm_head", "embed"],
-    total_train_steps: Optional[int] = None,
 ):
     """
     Recursively replace nn.Linear with HestiaLinear.
@@ -385,15 +368,12 @@ def replace_linear_with_hestia(
         anneal_ratio:       fraction of training for anneal phase
         temp_scales_dict:   {layer_id: temp_scale} from Hessian calibration
         skip_keywords:      layer names containing these are skipped
-        total_train_steps:  binds to scheduler; optional (can be set later)
 
     Returns:
         model (modified in-place)
     """
-    global _hestia_quant_layers
-    _hestia_quant_layers = []
-
     layer_counter = [0]
+    replace_count = [0]
 
     def _convert(module: nn.Module, prefix: str = ""):
         for name, child in list(module.named_children()):
@@ -417,17 +397,15 @@ def replace_linear_with_hestia(
                     layer_id=layer_id,
                 )
                 setattr(module, name, q_layer)
-                _hestia_quant_layers.append(q_layer)
+                replace_count[0] += 1
             else:
                 _convert(child, full_path)
 
     _convert(model)
 
-    if total_train_steps is not None:
-        _set_hestia_total_steps(total_train_steps)
 
     print(
-        f"[Hestia] Replaced {len(_hestia_quant_layers)} nn.Linear -> HestiaLinear "
+        f"[Hestia] Replaced {replace_count[0]} nn.Linear -> HestiaLinear "
         f"(bits={bits}, group_size={group_size}, compress_ratio={compress_ratio})"
     )
     return model

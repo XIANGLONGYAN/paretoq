@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from trace_estimation.calibrator import HessianTraceCalibrator
-from utils.utils_hestia import replace_linear_with_hestia, _set_hestia_total_steps
+import utils.utils_hestia as hestia_mod
 
 # from hestia.quant_config import get_quant_config
 
@@ -304,7 +304,7 @@ def main():
 
     # 3. Convert model to HestiaLinear layers
     print("[3/6] Converting model to HestiaLinear layers...")
-    model = replace_linear_with_hestia(
+    model = hestia_mod.replace_linear_with_hestia(
         model,
         bits=32,
         symmetric=True,
@@ -315,7 +315,6 @@ def main():
         anneal_ratio=0.8,
         temp_scales_dict=None,
         skip_keywords=["lm_head", "embed"],
-        total_train_steps=None
     )
     model.to(args.device)
 
@@ -338,9 +337,8 @@ def main():
     print("[5/6] Binding scheduler parameters...")
     # Dummy total steps since we're not training
 
-    global _hestia_quant_layers
 
-    _set_hestia_total_steps(1000) # Dummy value
+    hestia_mod.global_total_steps = 1000  # Dummy value, only needed for scheduler assert
     print("  - Scheduler bound (dummy total_steps=1000)")
 
     # 6. Run calibration

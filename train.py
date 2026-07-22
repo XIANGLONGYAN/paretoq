@@ -190,7 +190,7 @@ def train():
         
         elif training_args.use_hestia:
             # --- Hestia path ---
-            from utils.utils_hestia import replace_linear_with_hestia, _set_hestia_total_steps
+            import utils.utils_hestia as hestia_mod
 
             # Step 1: Optional Hessian calibration (on raw nn.Linear, before replacement)
             temp_scales = None
@@ -211,7 +211,7 @@ def train():
                 )
 
             # Step 2: Replace layers (with temp_scales if calibrated)
-            model = replace_linear_with_hestia(
+            model = hestia_mod.replace_linear_with_hestia(
                 model,
                 bits=model_args.w_bits,
                 group_size=training_args.hestia_group_size,
@@ -223,7 +223,6 @@ def train():
                 skip_keywords=skip_keywords,
             )
 
-            _set_hestia_total_steps(training_args.max_steps)
         elif training_args.use_quest:
             from utils.utils_quest import replace_linear_with_quest
             model = replace_linear_with_quest(
@@ -300,16 +299,10 @@ def train():
 
     # Register Hestia step callback if using Hestia
     if training_args.use_hestia:
-        from utils.utils_hestia import HestiaStepCallback, _set_hestia_total_steps
+        from utils.utils_hestia import HestiaStepCallback
         trainer.add_callback(HestiaStepCallback())
-        # Re-bind total steps now that trainer is configured
-        total_steps = trainer.state.max_steps if trainer.state.max_steps > 0 else (
-            len(train_data) // training_args.per_device_train_batch_size
-            // training_args.gradient_accumulation_steps
-            * training_args.num_train_epochs
-        )
-        _set_hestia_total_steps(total_steps if total_steps > 0 else training_args.max_steps)
-        log.info(f"[Hestia] Total training steps bound: {total_steps if total_steps > 0 else training_args.max_steps}")
+        hestia_mod.global_total_steps = trainer.state.max_steps
+        log.info(f"[Hestia] Total training steps bound: {trainer.state.max_steps}")
 
     # Register WinQ callback if using WinQ
     if training_args.use_winq and winq_layers:
