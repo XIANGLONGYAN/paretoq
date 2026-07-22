@@ -251,31 +251,41 @@ class HestiaLinear(nn.Linear):
         end_temp: float = 0.0,
         anneal_ratio: float = 0.8,
         temp_scale: Optional[float] = None,
+        layer_id: Optional[str] = None,
     ):
         super().__init__(in_features, out_features, bias=bias)
         self.bits = bits
         self.symmetric = symmetric
         self.group_size = group_size
+        self.layer_id = layer_id
 
-        # Build codebook
-        if bits == 1 and symmetric:
-            codebook = make_ternary_codebook()
+        # For bits >= 16 no quantization happens; skip huge codebook alloc
+        if bits >= 16:
+            self.quantizer = None
+            self.scheduler = None
         else:
-            codebook = make_bitwidth_codebook(bits, symmetric)
+            # Build codebook
+            if bits == 1 and symmetric:
+                codebook = make_ternary_codebook()
+            else:
+                codebook = make_bitwidth_codebook(bits, symmetric)
 
-        self.quantizer = ThermoQuantizer(codebook, group_size)
-        self.scheduler = ThermoScheduler(
-            compress_ratio=compress_ratio,
-            init_temp=init_temp,
-            end_temp=end_temp,
-            anneal_ratio=anneal_ratio,
-            temp_scale=temp_scale,
-        )
+            self.quantizer = ThermoQuantizer(codebook, group_size)
+            self.scheduler = ThermoScheduler(
+                compress_ratio=compress_ratio,
+                init_temp=init_temp,
+                end_temp=end_temp,
+                anneal_ratio=anneal_ratio,
+                temp_scale=temp_scale,
+            )
         self._step = 0
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         # Read global step (updated by HestiaStepCallback)
         global _hestia_global_step, _hestia_total_steps
+
+        if self.bits >= 16:
+            return F.linear(input, self.weight, self.bias)
 
         if self.training and _hestia_total_steps is not None:
             step = _hestia_global_step
@@ -313,6 +323,7 @@ class HestiaLinear(nn.Linear):
         end_temp: float = 0.0,
         anneal_ratio: float = 0.8,
         temp_scale: Optional[float] = None,
+        layer_id: Optional[str] = None,
     ):
         """Create HestiaLinear from existing nn.Linear, copying weights."""
         hestia_linear = cls(
@@ -327,6 +338,7 @@ class HestiaLinear(nn.Linear):
             end_temp=end_temp,
             anneal_ratio=anneal_ratio,
             temp_scale=temp_scale,
+            layer_id=layer_id,
         )
         hestia_linear.weight = linear.weight
         if linear.bias is not None:
@@ -389,7 +401,7 @@ def replace_linear_with_hestia(
                 continue
             full_path = f"{prefix}.{name}" if prefix else name
             if isinstance(child, nn.Linear) and not isinstance(child, HestiaLinear):
-                layer_id = f"layer_{layer_counter[0]}"
+                layer_id = f"layer_{layer_counter[0]}_{full_path}"
                 layer_counter[0] += 1
                 temp_scale = temp_scales_dict.get(layer_id) if temp_scales_dict else None
                 q_layer = HestiaLinear.from_linear(
@@ -402,6 +414,7 @@ def replace_linear_with_hestia(
                     end_temp=end_temp,
                     anneal_ratio=anneal_ratio,
                     temp_scale=temp_scale,
+                    layer_id=layer_id,
                 )
                 setattr(module, name, q_layer)
                 _hestia_quant_layers.append(q_layer)
