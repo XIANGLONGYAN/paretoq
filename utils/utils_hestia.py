@@ -277,6 +277,9 @@ class HestiaLinear(nn.Linear):
         # Read global step (updated by HestiaStepCallback)
         global _hestia_global_step, _hestia_total_steps
 
+        if self.bits >= 16:
+            return F.linear(input, self.weight, self.bias)
+
         if self.training and _hestia_total_steps is not None:
             step = _hestia_global_step
             pressure = self.scheduler.get_pressure(step)
