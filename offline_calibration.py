@@ -119,6 +119,7 @@ def run_calibration(
     calibration_granularity='layer',
     kappa=1.0,
     alpha=0.5,
+    skip_keywords=None,
 ):
     """
     Run Hessian trace calibration - EXACTLY matches train.py callback logic.
@@ -173,6 +174,7 @@ def run_calibration(
         granularity=calibration_granularity,
         kappa=kappa,
         alpha=alpha,
+        skip_keywords=skip_keywords,
         )
 
     scores_dict = outputs.get("scores", {}) if isinstance(outputs, dict) else {}
@@ -239,9 +241,9 @@ def parse_args():
         help="Batch size for calibration dataloader",
     )
 
-    # Skip layers
+    # Skip keywords
     parser.add_argument(
-        "--skip-layers",
+        "--skip-keywords",
         nargs="*",
         default=["lm_head", "embed"],
         help="Names of modules to skip during quantization",
@@ -315,7 +317,8 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.input_model_filename,
         torch_dtype=torch.float32,  # Use float32 for calibration stability
-        device_map='cpu'
+        device_map='cpu',
+        attn_implementation="eager",  # SDPA kernels do not support double backward
     )
     print(f"  - Model loaded: {type(model).__name__}")
 
@@ -377,6 +380,7 @@ def main():
         calibration_granularity=args.calibration_granularity,
         kappa=args.kappa,
         alpha=args.alpha,
+        skip_keywords=args.skip_keywords,
     )
 
     # Save results

@@ -124,6 +124,7 @@ def train():
         torch_dtype=dtype,
         low_cpu_mem_usage=True,
         device_map='cpu',
+        attn_implementation="eager"
     )
     log.info("Complete model loading...")
 

@@ -13,6 +13,7 @@ def _compute_hvp_single_vector(
     loss: torch.Tensor,
     param: torch.Tensor,
     vector: torch.Tensor,
+    retain_graph: bool = True,
 ) -> torch.Tensor:
     """
     Compute Hessian-vector product for a SINGLE vector using double backward.
@@ -31,15 +32,16 @@ def _compute_hvp_single_vector(
         HVP result [numel]
     """
     # First backward: compute gradient with graph retained
+    # retain_graph must be True here: the second backward depends on the loss graph.
     grad = torch.autograd.grad(loss, param, create_graph=True, retain_graph=True)[0]
     grad_flat = grad.view(-1)
-    
+
     # Compute grad @ v (scalar)
     grad_v = torch.dot(grad_flat, vector)
-    
+
     # Second backward: d/dp (grad @ v) = H @ v
-    hvp = torch.autograd.grad(grad_v, param, retain_graph=True)[0]
-    
+    hvp = torch.autograd.grad(grad_v, param, retain_graph=retain_graph)[0]
+
     return hvp.view(-1)
 
 
@@ -96,6 +98,7 @@ class HessianTraceCalibrator:
         granularity: str = "tensor",
         kappa: float = 1.0,
         alpha: float = 0.5,
+        skip_keywords: Optional[List[str]] = None,
     ) -> Dict[str, Dict[str, float]]:
         """
         Calibrate Hessian Trace for specified layers, compute temperature scaling factors,
@@ -125,6 +128,10 @@ class HessianTraceCalibrator:
             # Per-tensor: Each Linear layer has its own trace
             for name, module in self.model.named_modules():
                 if isinstance(module, tuple(target_modules)):
+                    # Skip modules matching skip_keywords
+                    if skip_keywords and any(kw in name for kw in skip_keywords):
+                        continue
+
                     if hasattr(module, 'weight') and module.weight is not None:
                         if module.weight.requires_grad:
                             layer_states[module] = HutchPlusPlusState(
@@ -142,6 +149,10 @@ class HessianTraceCalibrator:
             layer_groups: Dict[str, List[nn.Module]] = {}
             for name, module in self.model.named_modules():
                 if isinstance(module, tuple(target_modules)):
+                    # Skip modules matching skip_keywords
+                    if skip_keywords and any(kw in name for kw in skip_keywords):
+                        continue
+
                     if hasattr(module, 'weight') and module.weight is not None:
                         if module.weight.requires_grad:
                             # Extract layer prefix from layer_id
@@ -179,6 +190,10 @@ class HessianTraceCalibrator:
             component_groups: Dict[str, List[nn.Module]] = {}
             for name, module in self.model.named_modules():
                 if isinstance(module, tuple(target_modules)):
+                    # Skip modules matching skip_keywords
+                    if skip_keywords and any(kw in name for kw in skip_keywords):
+                        continue
+
                     if hasattr(module, 'weight') and module.weight is not None:
                         if module.weight.requires_grad:
                             # Extract component name from full path
@@ -417,9 +432,10 @@ class HessianTraceCalibrator:
                 for vec_idx in range(k):
                     # Get single probe vector and move to GPU
                     vec = vectors_cpu[:, vec_idx].to(self.device)
-                    
+
                     # Compute HVP for this single vector
-                    hvp = _compute_hvp_single_vector(loss, param, vec)
+                    is_last = (vec_idx == k - 1)
+                    hvp = _compute_hvp_single_vector(loss, param, vec, retain_graph=not is_last)
                     
                     # Accumulate on CPU
                     hvp_accum[:, vec_idx] += hvp.cpu()
