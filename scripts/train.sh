@@ -12,7 +12,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --nproc_per_node=8 --ma
 --hestia_end_temp 0.0 \
 --hestia_anneal_ratio 0.8 \
 --hestia_group_size 0 \
---hestia_calib_samples 0 \
+--hestia-enable-calib False \
+--hessian-traces-path /path/to/calib.pkl \
 --use_winq True \
 --winq_sigma 1e-3 \
 --winq_alpha 0.2 \

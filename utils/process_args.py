@@ -175,9 +175,13 @@ class TrainingArguments(transformers.TrainingArguments):
         default=0,
         metadata={"help": "Group size for Hestia quantization: 0=per-tensor, -1=per-channel."}
     )
-    hestia_calib_samples: Optional[int] = field(
-        default=0,
-        metadata={"help": "Number of samples for Hestia Hessian calibration (0 = skip calibration)."}
+    hessian_traces_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to pre-computed Hessian traces pickle from offline_calibration.py."}
+    )
+    hestia_enable_calib: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to apply per-layer temperature scaling from Hessian calibration."}
     )
     use_winq: Optional[bool] = field(
         default=False,

@@ -409,3 +409,22 @@ def replace_linear_with_hestia(
         f"(bits={bits}, group_size={group_size}, compress_ratio={compress_ratio})"
     )
     return model
+
+
+def load_temp_scales(path: str) -> Dict[str, float]:
+    """
+    Load per-layer temperature scaling factors from a pickle file produced by
+    offline_calibration.py.
+
+    Args:
+        path: Path to the .pkl file containing calibration results.
+
+    Returns:
+        dict mapping layer_id -> temp_scale (float)
+    """
+    import pickle
+    with open(path, 'rb') as f:
+        payload = pickle.load(f)
+    if isinstance(payload, dict) and "temp_scales" in payload:
+        return payload["temp_scales"]
+    raise ValueError(f"Unsupported calibration payload type: {type(payload)}")

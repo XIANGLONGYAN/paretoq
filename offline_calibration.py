@@ -117,6 +117,8 @@ def run_calibration(
     use_gradient_checkpointing=True,
     max_seq_len=None,
     calibration_granularity='layer',
+    kappa=1.0,
+    alpha=0.5,
 ):
     """
     Run Hessian trace calibration - EXACTLY matches train.py callback logic.
@@ -169,7 +171,9 @@ def run_calibration(
         num_query=num_query,
         num_batches=num_batches,
         granularity=calibration_granularity,
-    )
+        kappa=kappa,
+        alpha=alpha,
+        )
 
     scores_dict = outputs.get("scores", {}) if isinstance(outputs, dict) else {}
     traces_dict = outputs.get("traces", {}) if isinstance(outputs, dict) else {}
@@ -271,6 +275,19 @@ def parse_args():
         default="tensor"
     )
 
+    parser.add_argument(
+        "--kappa",
+        type=float,
+        default=1.0,
+        help="Sigmoid gain factor for temperature scaling (kappa).",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.5,
+        help="Asynchrony coefficient for temperature scaling (alpha).",
+    )
+
     return parser.parse_args()
 
 def main():
@@ -357,7 +374,9 @@ def main():
         device=args.device,
         use_gradient_checkpointing=use_gc,
         max_seq_len=args.model_max_length,
-        calibration_granularity=args.calibration_granularity
+        calibration_granularity=args.calibration_granularity,
+        kappa=args.kappa,
+        alpha=args.alpha,
     )
 
     # Save results

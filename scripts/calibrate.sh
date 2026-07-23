@@ -11,4 +11,6 @@ python offline_calibration.py \
 --device cuda \
 --no-gradient-checkpointing \
 --verbose \
---calibration-granularity tensor
+--calibration-granularity tensor \
+--kappa 1.0 \
+--alpha 0.5

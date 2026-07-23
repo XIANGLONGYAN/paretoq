@@ -192,25 +192,10 @@ def train():
             # --- Hestia path ---
             import utils.utils_hestia as hestia_mod
 
-            # Step 1: Optional Hessian calibration (on raw nn.Linear, before replacement)
             temp_scales = None
-            if training_args.hestia_calib_samples > 0:
-                from utils.utils_hestia_calib import calibrate_hestia
-                from torch.utils.data import DataLoader
-                calib_loader = DataLoader(
-                    train_data,
-                    batch_size=training_args.per_device_train_batch_size,
-                    shuffle=True,
-                    collate_fn=default_data_collator,
-                )
-                temp_scales = calibrate_hestia(
-                    model, calib_loader,
-                    num_samples=training_args.hestia_calib_samples,
-                    device="cuda",
-                    skip_keywords=skip_keywords,
-                )
+            if training_args.hestia_enable_calib and training_args.hessian_traces_path:
+                temp_scales = hestia_mod.load_temp_scales(training_args.hessian_traces_path)
 
-            # Step 2: Replace layers (with temp_scales if calibrated)
             model = hestia_mod.replace_linear_with_hestia(
                 model,
                 bits=model_args.w_bits,

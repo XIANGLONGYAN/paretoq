@@ -93,7 +93,9 @@ class HessianTraceCalibrator:
         num_sketch: int = 10,
         num_query: int = 20,
         num_batches: int = 5,
-        granularity: str = "layer"
+        granularity: str = "tensor",
+        kappa: float = 1.0,
+        alpha: float = 0.5,
     ) -> Dict[str, Dict[str, float]]:
         """
         Calibrate Hessian Trace for specified layers, compute temperature scaling factors,
@@ -113,6 +115,7 @@ class HessianTraceCalibrator:
                 - "scores": {layer_id: sensitivity_score}
                 - "stats": {"log_mean": float, "log_std": float}
         """
+        self.model.train()
         # Register target layers and initialize states based on granularity
         layer_states: Dict[nn.Module, HutchPlusPlusState] = {}
         layer_params: Dict[nn.Module, torch.Tensor] = {}
@@ -271,7 +274,7 @@ class HessianTraceCalibrator:
                         module_traces[group_mod] = trace_value
                 module_traces[mod] = trace_value
 
-        temp_scales, scores, stats = self._compute_temperature_scaling_factors(module_traces)
+        temp_scales, scores, stats = self._compute_temperature_scaling_factors(module_traces, kappa, alpha)
 
         traces_by_layer_id: Dict[str, float] = {}
         temp_scales_by_layer_id: Dict[str, float] = {}
@@ -283,7 +286,10 @@ class HessianTraceCalibrator:
             traces_by_layer_id[layer_id] = trace_value
 
         for mod, temp_scale in temp_scales.items():
-            mod.temp_scale = temp_scale
+            if hasattr(mod, 'scheduler') and mod.scheduler is not None and hasattr(mod.scheduler, "temp_scale"):
+                mod.scheduler.temp_scale = temp_scale
+            else:
+                mod.temp_scale = temp_scale
             layer_id = getattr(mod, "layer_id", None)
             if layer_id is None:
                 continue
@@ -306,6 +312,8 @@ class HessianTraceCalibrator:
     def _compute_temperature_scaling_factors(
         self,
         traces: Dict[nn.Module, float],
+        kappa: float,
+        alpha: float,
         eps: float = 1e-8,
     ) -> Tuple[Dict[nn.Module, float], Dict[nn.Module, float], Dict[str, float]]:
         """
@@ -335,11 +343,9 @@ class HessianTraceCalibrator:
         temp_scales: Dict[nn.Module, float] = {}
         scores: Dict[nn.Module, float] = {}
         for mod, trace_value in traces.items():
-            kappa = getattr(getattr(mod, "qconfig", None), "kappa", 1.0)
-            alpha = getattr(getattr(mod, "qconfig", None), "alpha", 0.5)
             z_i = (math.log(max(trace_value, eps)) - log_mean) / (log_std + eps)
             sensitivity_score = 1.0 / (1.0 + math.exp(-kappa * z_i))
-            temp_scale = math.exp(-alpha * sensitivity_score)
+            temp_scale = math.exp(alpha * sensitivity_score)
             temp_scales[mod] = temp_scale
             scores[mod] = sensitivity_score
 
