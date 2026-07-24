@@ -77,9 +77,9 @@ class MyQuantizer(nn.Module):
 
     def reshape_by_group_size(self, x):
         origin_shape = x.size()
-        if self.group_size == 0: # Per-token
+        if self.group_size == -1: # Channel-wise
             return x, origin_shape
-        elif self.group_size == -1: # Per-tensor
+        elif self.group_size == 0: # Per-tensor
             return x.reshape(1, -1), origin_shape
         elif x.size(-1) % self.group_size != 0:
             raise ValueError(f'group_size: {self.group_size}, x.size(-1): {x.size(-1)}. group_size cannot divide x.size(-1)')
@@ -93,6 +93,20 @@ class MyQuantizer(nn.Module):
             return x
 
         x, origin_shape = self.reshape_by_group_size(x)
+        if self.num_bits == 0:
+            if self.clip_type == ClipType.GAUSSIAN:
+                raise NotImplementedError()
+            elif self.clip_type == ClipType.MAX:
+                raise NotImplementedError()
+            elif self.clip_type == ClipType.MEAN:
+                abs_mean = x.abs().mean(dim=-1, keepdim=True)
+                scale = abs_mean
+                scale = scale.clamp(min=1e-5)
+                x_clipped = x.clamp(-abs_mean, abs_mean)
+                x_q = scale * (x_clipped / scale).round()
+                return (x + (x_q - x).detach()).reshape(origin_shape)
+
+
         if self.asymmetric:
             if self.clip_type == ClipType.GAUSSIAN:
                 raise NotImplementedError('Gaussian trust quantization cannot be used for asymmetric.')

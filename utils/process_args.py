@@ -45,6 +45,10 @@ class ModelArguments:
         default=False,
         metadata={"help": "Whether to use asymmetric activation quantization."}
     )
+    group_size: Optional[int] = field(
+        default=0,
+        metadata={"help": "Group size for quantization: 0=per-tensor, -1=per-channel."}
+    )
 '''
     contain_weight_clip_val: Optional[bool] = field(
         default=False,
@@ -170,10 +174,6 @@ class TrainingArguments(transformers.TrainingArguments):
     hestia_anneal_ratio: Optional[float] = field(
         default=0.8,
         metadata={"help": "Fraction of training steps allocated to Hestia anneal phase."}
-    )
-    hestia_group_size: Optional[int] = field(
-        default=0,
-        metadata={"help": "Group size for Hestia quantization: 0=per-tensor, -1=per-channel."}
     )
     hessian_traces_path: Optional[str] = field(
         default=None,

@@ -353,6 +353,7 @@ def replace_linear_with_hestia(
     anneal_ratio: float = 0.8,
     temp_scales_dict: Optional[Dict[str, float]] = None,
     skip_keywords: Optional[List[str]] = ["lm_head", "embed"],
+    strict_temp_scale: bool = False,
 ):
     """
     Recursively replace nn.Linear with HestiaLinear.
@@ -384,6 +385,9 @@ def replace_linear_with_hestia(
                 layer_id = f"layer_{layer_counter[0]}_{full_path}"
                 layer_counter[0] += 1
                 temp_scale = temp_scales_dict.get(layer_id) if temp_scales_dict else None
+                if strict_temp_scale and temp_scale is None:
+                    raise ValueError(f"[Hestia] temp_scale not found for layer '{layer_id}' in temp_scales_dict. "
+                                   f"Available keys sample: {list(temp_scales_dict.keys())[:5]}")
                 q_layer = HestiaLinear.from_linear(
                     child,
                     bits=bits,
