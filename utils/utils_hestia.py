@@ -36,6 +36,10 @@ global_total_steps: int = 0
 class HestiaStepCallback(TrainerCallback):
     """HuggingFace Trainer callback: updates global_cur_step each step."""
 
+    def on_train_begin(self, args, state, control, **kwargs):
+        global global_total_steps
+        global_total_steps = state.max_steps
+
     def on_step_end(self, args, state, control, **kwargs):
         global global_cur_step
         global_cur_step = state.global_step

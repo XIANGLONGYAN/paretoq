@@ -288,8 +288,6 @@ def train():
     if training_args.use_hestia:
         from utils.utils_hestia import HestiaStepCallback
         trainer.add_callback(HestiaStepCallback())
-        hestia_mod.global_total_steps = trainer.state.max_steps
-        log.info(f"[Hestia] Total training steps bound: {trainer.state.max_steps}")
 
     # Register WinQ callback if using WinQ
     if training_args.use_winq and winq_layers:
