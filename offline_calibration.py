@@ -429,8 +429,9 @@ def main():
         for layer_id, temp_scale_value in list(temp_scales_dict.items())[:5]:
             print(f"  - {layer_id}: {temp_scale_value:.6f}")
 
-    # Save to file - both pkl (for program) and json (for human reading)
-    # Save as pickle (for program loading)
+   # Save to file - both pkl (for program) and json (for human reading)
+   # Save as pickle (for program loading)
+    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
     with open(args.output_path, 'wb') as f:
         pickle.dump(outputs, f)
 

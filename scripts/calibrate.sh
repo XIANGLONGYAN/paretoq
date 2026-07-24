@@ -1,13 +1,13 @@
 python offline_calibration.py \
 --input-model-filename meta-llama/Llama-3.2-1B \
---model-max-length 2048 \
+--model-max-length 512 \
 --data-bin-path /home/jaqichen/data2/paretoq/dataset_cache/meta-llama_Llama-3.2-1B/HuggingFaceFW_fineweb-edu_sample-10BT_train_tokens_100000000/train.bin \
 --output-path /home/jaqichen/data2/paretoq/trace_estimation/meta-llama_Llama-3.2-1B/calib.pkl \
 --num-sketch 10 \
 --num-query 20 \
 --num-batches 5 \
 --calibrate-batch-size 1 \
---skip-layers lm_head embed \
+--skip-keywords lm_head embed \
 --device cuda \
 --no-gradient-checkpointing \
 --verbose \
