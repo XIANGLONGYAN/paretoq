@@ -317,10 +317,13 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.input_model_filename,
         torch_dtype=torch.float32,  # Use float32 for calibration stability
-        device_map='cpu',
+        trust_remote_code=True,
         attn_implementation="eager",  # SDPA kernels do not support double backward
     )
     print(f"  - Model loaded: {type(model).__name__}")
+    model.to(args.device)
+
+    print(f"  - Model to {args.device}")
 
     # 3. Convert model to HestiaLinear layers
     print("[3/6] Converting model to HestiaLinear layers...")
