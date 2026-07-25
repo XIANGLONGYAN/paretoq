@@ -1,8 +1,8 @@
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --nproc_per_node=8 --master_port=29518 train.py \
---use_my True \
+CUDA_VISIBLE_DEVICES=1,2 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29518 train.py \
+--use_my False \
 --use_stableqat False \
 --use_robusttraining False \
---use_quest False \
+--use_quest True \
 --quest_hadamard_block_size 128 \
 --quest_trust_scale_weight 1.0 \
 --quest_trust_scale_act 1.0 \
@@ -17,11 +17,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --nproc_per_node=8 --ma
 --winq_sigma 1e-3 \
 --winq_alpha 0.2 \
 --winq_reset_interval 1000 \
---w_bits 0 \
+--w_bits 2 \
 --a_bits 16 \
---weight_asymmetric False \
---act_asymmetric True \
---group_size 128 \
+--w_group_size -1 \
+--a_group_size -1 \
 --local_dir "/home/jiaqichen/data2/paretoq" \
 --input_model_filename "meta-llama/Llama-3.2-1B" \
 --output_model_filename "1B-finetuned-4bit" \
@@ -45,7 +44,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --nproc_per_node=8 --ma
 --num_train_epochs 1 \
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 2 \
---gradient_accumulation_steps 1 \
+--gradient_accumulation_steps 4 \
 --save_strategy "steps" \
 --save_steps 2000 \
 --report_to "wandb" \
@@ -55,7 +54,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --nproc_per_node=8 --ma
 --lr_scheduler_type "cosine" \
 --logging_steps 1 \
 --tf32 False \
---gradient_checkpointing False \
+--gradient_checkpointing True \
 --qat True \
 --full_determinism True \
 --dataloader_num_workers 0 \

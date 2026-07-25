@@ -45,7 +45,7 @@ class ModelArguments:
         default=0,
         metadata={"help": "Group size for activation quantization: 0=per-tensor, -1=per-channel."}
     )
-    w_quant_type: Optional[str] = filed(
+    w_quant_type: Optional[str] = field(
         default="AlignedHadamardGaussianTrustQuantizer",
         metadata={"help": "Quantizer type for weight."}
     )
