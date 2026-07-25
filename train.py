@@ -172,19 +172,15 @@ def train():
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
         if training_args.use_my:
-            from utils.utils_myquant import replace_linear_with_myquantize, ClipType
+            from utils.utils_myquant import replace_linear_with_myquantize
             model = replace_linear_with_myquantize(
                 model,
                 w_bits=model_args.w_bits,
                 a_bits=model_args.a_bits,
-                w_asymmetric=model_args.weight_asymmetric,
-                a_asymmetric=model_args.act_asymmetric,
-                w_group_size=model_args.group_size,
-                a_group_size=model_args.group_size,
-                w_clip_type=ClipType.GAUSSIAN,
-                a_clip_type=ClipType.GAUSSIAN,
-                use_trust_mask=False,
-                trust_scale=1.0,
+                w_group_size=model_args.w_group_size,
+                a_group_size=model_args.a_group_size,
+                w_clip_type=model_args.w_quant_type,
+                a_clip_type=model_args.a_quant_type,
                 skip_keywords=['embed', 'lm_head']
             )
                 
@@ -200,7 +196,7 @@ def train():
             model = hestia_mod.replace_linear_with_hestia(
                 model,
                 bits=model_args.w_bits,
-                group_size=model_args.group_size,
+                group_size=model_args.w_group_size,
                 compress_ratio=training_args.hestia_compress_ratio,
                 init_temp=training_args.hestia_init_temp,
                 end_temp=training_args.hestia_end_temp,
@@ -222,6 +218,8 @@ def train():
                 skip_keywords=skip_keywords,
             )
         else:
+            raise ValueError('No matched quantization method.')
+            '''
             from utils.utils_quant import replace_linear_with_quantized
             model = replace_linear_with_quantized(
                 model,
@@ -233,7 +231,7 @@ def train():
                 use_stableqat=training_args.use_stableqat,
                 use_robusttraining=training_args.use_robusttraining
             )
-
+            '''
 
     # --- WinQ wrapper (applied after quantizer selection, before .cuda()) ---
     winq_layers = []

@@ -37,6 +37,24 @@ class ModelArguments:
             "help": "#bits to use for activation quantization; use 16 for full precision."
         },
     )
+    w_group_size: Optional[int] = field(
+        default=0,
+        metadata={"help": "Group size for weight quantization: 0=per-tensor, -1=per-channel."}
+    )
+    a_group_size: Optional[int] = field(
+        default=0,
+        metadata={"help": "Group size for activation quantization: 0=per-tensor, -1=per-channel."}
+    )
+    w_quant_type: Optional[str] = filed(
+        default="AlignedHadamardGaussianTrustQuantizer",
+        metadata={"help": "Quantizer type for weight."}
+    )
+    a_quant_type: Optional[str] = field(
+        default="AlignedHadamardGaussianTrustQuantizer",
+        metadata={"help": "Quantizer type for activation."}
+    )
+    
+'''
     weight_asymmetric: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to use asymmetric weight quantization."}
@@ -45,11 +63,6 @@ class ModelArguments:
         default=False,
         metadata={"help": "Whether to use asymmetric activation quantization."}
     )
-    group_size: Optional[int] = field(
-        default=0,
-        metadata={"help": "Group size for quantization: 0=per-tensor, -1=per-channel."}
-    )
-'''
     contain_weight_clip_val: Optional[bool] = field(
         default=False,
         metadata={
