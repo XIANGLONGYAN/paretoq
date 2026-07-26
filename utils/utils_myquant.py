@@ -213,21 +213,28 @@ class MyQuantizeLinear(nn.Linear):
         a_group_size=-1,
         w_quant_type='AlignedHadamardGaussianTrustQuantizer',
         a_quant_type='AlignedHadamardGaussianTrustQuantizer',
+        layer_id=None,
+        trust_scale=None,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
+
+        assert layer_id is not None and trust_scale is not None, f"layer_id: {layer_id}, trust_scale: {trust_scale} cannot be None"
+
         w_quantizer_cls = QUANTIZER_MAP[w_quant_type]
         a_quantizer_cls = QUANTIZER_MAP[a_quant_type]
         self.w_quantizer = w_quantizer_cls(w_bits, w_group_size)
         self.a_quantizer = a_quantizer_cls(a_bits, a_group_size)
 
+        self.layer_id = layer_id
+        
 
     def forward(self, x):
         w = self.weight
         a = x
 
-        w_q = self.w_quantizer(w, trust_scale=self.w_trust_scale)
-        a_q = self.a_quantizer(a, trust_scale=self.a_trust_scale)
+        w_q = self.w_quantizer(w, trust_scale=self.trust_scale)
+        a_q = self.a_quantizer(a, trust_scale=self.trust_scale)
 
         return F.linear(a_q, w_q, self.bias)
       
@@ -240,7 +247,9 @@ class MyQuantizeLinear(nn.Linear):
         w_group_size=-1,
         a_group_size=-1,
         w_quant_type='AlignedHadamardGaussianTrustQuantizer',
-        a_quant_type='AlignedHadamardGaussianTrustQuantizer'
+        a_quant_type='AlignedHadamardGaussianTrustQuantizer',
+        layer_id=None,
+        trust_scale=None
     ):
         quantize_linear = cls(
             in_features=linear.in_features,
@@ -251,7 +260,9 @@ class MyQuantizeLinear(nn.Linear):
             w_group_size=w_group_size,
             a_group_size=a_group_size,
             w_quant_type=w_quant_type,
-            a_quant_type=a_quant_type
+            a_quant_type=a_quant_type,
+            layer_id=layer_id,
+            trust_scale=trust_scale
         )
         quantize_linear.weight = linear.weight
         quantize_linear.bias = None
@@ -260,12 +271,6 @@ class MyQuantizeLinear(nn.Linear):
         
         return quantize_linear
 
-def _set_module_by_name(model, name, new_module):
-    parts = name.split(".")
-    parent = model
-    for part in parts[:-1]:
-        parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
-    setattr(parent, parts[-1], new_module)
 
 def replace_linear_with_myquantize(
     model: nn.Module,
@@ -275,31 +280,49 @@ def replace_linear_with_myquantize(
     a_group_size=-1,
     w_quant_type='AlignedHadamardGaussianTrustQuantizer',
     a_quant_type='AlignedHadamardGaussianTrustQuantizer',
-    skip_keywords=['embed', 'lm_head']
+    skip_keywords=['embed', 'lm_head'],
+    trust_scale_dict=None
 ):
-    replace_list = []
-    for name, module in model.named_modules():
-        if not isinstance(module, nn.Linear) or isinstance(module, MyQuantizeLinear):
-            continue
-        if any(kw in name for kw in skip_keywords):
-            continue
-        if module.in_features % 128 != 0:
-            raise ValueError(f'in_features of {name} is {module.in_features} which cannot be divided by 128.')
-            continue
-        replace_list.append((name, module))
+    layer_counter = [0]
+    replace_count = [0]
 
-    for name, module in replace_list:
-        quantize_linear = MyQuantizeLinear.from_linear(
-            module,
-            w_bits=w_bits,
-            a_bits=a_bits,
-            w_group_size=w_group_size,
-            a_group_size=a_group_size,
-            w_quant_type=w_quant_type,
-            a_quant_type=a_quant_type
-        )
-        _set_module_by_name(model, name, quantize_linear)
+    def _convert(module: nn.Module, prefix: str = ""):
+        for name, child in list(module.named_children()):
+            if name in skip_keywords:
+                continue
+            full_path = f"{prefix}.{name}" if prefix else name
 
-    print(f'Replaced {len(replace_list)} nn.Linear with MyQuantizeLinear')
+            if isinstance(child, nn.Linear) and not isinstance(child, MyQuantizeLinear):
+                layer_id = f"layer_{layer_counter[0]}_{full_path}"
+                layer_counter[0] += 1
 
-    return model
+                trust_scale = trust_scale_dict.get(layer_id, None) if trust_scale_dict is not None else None
+
+                q_layer = MyQuantizeLinear.from_linear(
+                    child,
+                    w_bits=w_bits,
+                    a_bits=a_bits,
+                    w_group_size=w_group_size,
+                    a_group_size=a_group_size,
+                    w_quant_type=w_quant_type,
+                    a_quant_type=a_quant_type,
+                    layer_id=layer_id,
+                    trust_scale=trust_scale
+                )
+                setattr(module, name, q_layer)
+                replace_count[0] += 1
+            else:
+                _convert(child, full_path)
+
+    _convert(model)
+    
+    print(f'Replaced {replace_count[0]} nn.Linear with MyQuantizeLinear')
+
+
+def load_trust_scale_dict(file_path, key_alias='trust_scales'):
+    import pickle
+    with open(file_path, 'rb') as f:
+        payload = pickle.load(f)
+    if isinstance(payload, dict) and key_alias in payload:
+        return payload[key_alias]
+    raise ValueError(f"Unsupported calibration payload type: {type(payload)}")
