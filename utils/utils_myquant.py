@@ -59,6 +59,9 @@ class BaseQuantizer(nn.Module):
 
 class AsymQuantizer(BaseQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
+
         x, origin_shape = self.reshape_by_group_size(x)
         Qn, Qp = 0, 2**self.num_bits - 1
         min_val, max_val = x.min(dim=-1, keepdim=True)[0], x.max(dim=-1, keepdim=True)[0]
@@ -71,6 +74,8 @@ class AsymQuantizer(BaseQuantizer):
 
 class SymMaxQuantizer(BaseQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         abs_max = x.abs().max(dim=-1, keepdim=True)[0]
         scale = abs_max / (2**(self.num_bits - 1) - 1)
@@ -82,6 +87,8 @@ class SymMaxQuantizer(BaseQuantizer):
 
 class AlignedSymMaxQuantizer(BaseQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         abs_max = x.abs().max(dim=-1, keepdim=True)[0]
         scale = 2 * abs_max / (2**self.num_bits - 1)
@@ -93,6 +100,8 @@ class AlignedSymMaxQuantizer(BaseQuantizer):
 
 class SymMeanQuantizer(BaseQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         abs_mean = x.abs().mean(dim=-1, keepdim=True)
         scale = abs_mean / (2**(self.num_bits - 1) - 1)
@@ -104,6 +113,8 @@ class SymMeanQuantizer(BaseQuantizer):
 
 class AlignedSymMeanQuantizer(BaseQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         abs_mean = x.abs().mean(dim=-1, keepdim=True)
         scale = 2 * abs_mean / (2**self.num_bits - 1)
@@ -133,6 +144,8 @@ class HadamardGaussianQuantizer(BaseQuantizer):
         return x_inv_had.reshape(origin_shape)
 
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         x_had = self.hadamard_transform(x)
         alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
@@ -150,6 +163,8 @@ class HadamardGaussianQuantizer(BaseQuantizer):
 
 class AlignedHadamardGaussianQuantizer(HadamardGaussianQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         x_had = self.hadamard_transform(x)
         alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
@@ -167,6 +182,8 @@ class AlignedHadamardGaussianQuantizer(HadamardGaussianQuantizer):
 
 class AlignedHadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
     def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
         x, origin_shape = self.reshape_by_group_size(x)
         x_had = self.hadamard_transform(x)
         alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
@@ -180,7 +197,7 @@ class AlignedHadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
         # Trust mask
         trust_scale = kwargs['trust_scale']
         trust_threshold = trust_scale * (step / 2)
-        trust_mask = ((x_q - x_had).abs <= trust_threshold).to(dtype=x.dtype)
+        trust_mask = ((x_q - x_had).abs() <= trust_threshold).to(dtype=x.dtype)
 
         x_masked = x_had * trust_mask
 
@@ -219,7 +236,8 @@ class MyQuantizeLinear(nn.Linear):
     ):
         super().__init__(*args, **kwargs)
 
-        assert layer_id is not None and trust_scale is not None, f"layer_id: {layer_id}, trust_scale: {trust_scale} cannot be None"
+        assert layer_id is not None
+        # assert layer_id is not None and trust_scale is not None, f"layer_id: {layer_id}, trust_scale: {trust_scale} cannot be None"
 
         w_quantizer_cls = QUANTIZER_MAP[w_quant_type]
         a_quantizer_cls = QUANTIZER_MAP[a_quant_type]
@@ -227,6 +245,7 @@ class MyQuantizeLinear(nn.Linear):
         self.a_quantizer = a_quantizer_cls(a_bits, a_group_size)
 
         self.layer_id = layer_id
+        self.trust_scale = trust_scale
         
 
     def forward(self, x):
@@ -296,7 +315,7 @@ def replace_linear_with_myquantize(
                 layer_id = f"layer_{layer_counter[0]}_{full_path}"
                 layer_counter[0] += 1
 
-                trust_scale = trust_scale_dict.get(layer_id, None) if trust_scale_dict is not None else None
+                trust_scale = trust_scale_dict.get(layer_id, None) if trust_scale_dict is not None else 1.0
 
                 q_layer = MyQuantizeLinear.from_linear(
                     child,
@@ -317,6 +336,8 @@ def replace_linear_with_myquantize(
     _convert(model)
     
     print(f'Replaced {replace_count[0]} nn.Linear with MyQuantizeLinear')
+
+    return model
 
 
 def load_trust_scale_dict(file_path, key_alias='trust_scales'):

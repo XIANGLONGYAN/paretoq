@@ -179,8 +179,8 @@ def train():
                 a_bits=model_args.a_bits,
                 w_group_size=model_args.w_group_size,
                 a_group_size=model_args.a_group_size,
-                w_clip_type=model_args.w_quant_type,
-                a_clip_type=model_args.a_quant_type,
+                w_quant_type=model_args.w_quant_type,
+                a_quant_type=model_args.a_quant_type,
                 skip_keywords=['embed', 'lm_head']
             )
                 
