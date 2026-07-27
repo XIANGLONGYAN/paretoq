@@ -167,7 +167,7 @@ class HadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
         super().__init__(*args, **kwargs)
         self.trust_style = trust_style
 
-    def forward(self, x, trust_style='mask', **kwargs):
+    def forward(self, x, **kwargs):
         if self.num_bits >= 16:
             return x
         x, origin_shape = self.reshape_by_group_size(x)
@@ -180,18 +180,19 @@ class HadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
         x_clipped = x_had.clamp(min=-scale, max=scale)
         x_q = step * (x_clipped / step).round()
 
+        half_step = step / 2
 
         dist = (x_q - x_had).abs()
         if self.trust_style == 'mask':
             trust_threshold_scale = kwargs['trust_threshold_scale']
-            trust_threshold = trust_threshold_scale * (step / 2)
+            trust_threshold = trust_threshold_scale * half_step
             trust_mask = (dist <= trust_threshold).to(dtype=x.dtype)
         elif self.trust_style == 'linear':
-            trust_mask = -(dist - step) / step
+            trust_mask = -(dist - half_step) / half_step
         elif self.trust_style == 'cosine':
-            trust_mask = (torch.cos(torch.pi * (dist / step)) + 1) / 2
+            trust_mask = (torch.cos(torch.pi * (dist / half_step)) + 1) / 2
         else:
-            raise ValueError(f'trust_style: {trust_style} is not valid.')
+            raise ValueError(f'trust_style: {self.trust_style} is not valid.')
 
         trust_mask = trust_mask.detach()
 
@@ -241,17 +242,19 @@ class AlignedHadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
         x_clipped = x_had.clamp(min=-scale, max=scale)
         x_q = step * (x_clipped / step + 0.5).round() - step / 2
 
+        half_step = step / 2
+
         dist = (x_q - x_had).abs()
         if self.trust_style == 'mask':
             trust_threshold_scale = kwargs['trust_threshold_scale']
-            trust_threshold = trust_threshold_scale * (step / 2)
+            trust_threshold = trust_threshold_scale * half_step
             trust_mask = (dist <= trust_threshold).to(dtype=x.dtype)
         elif self.trust_style == 'linear':
-            trust_mask = -(dist - step) / step
+            trust_mask = -(dist - half_step) / half_step
         elif self.trust_style == 'cosine':
-            trust_mask = (torch.cos(torch.pi * (dist / step)) + 1) / 2
+            trust_mask = (torch.cos(torch.pi * (dist / half_step)) + 1) / 2
         else:
-            raise ValueError(f'trust_style: {trust_style} is not valid.')
+            raise ValueError(f'trust_style: {self.trust_style} is not valid.')
 
         trust_mask = trust_mask.detach()
 

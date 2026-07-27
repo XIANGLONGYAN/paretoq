@@ -1,8 +1,8 @@
-CUDA_VISIBLE_DEVICES=1,2 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29518 train.py \
---use_my False \
+CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
+--use_my True \
 --use_stableqat False \
 --use_robusttraining False \
---use_quest True \
+--use_quest False \
 --quest_hadamard_block_size 128 \
 --quest_trust_scale_weight 1.0 \
 --quest_trust_scale_act 1.0 \
@@ -21,11 +21,13 @@ CUDA_VISIBLE_DEVICES=1,2 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --a_bits 16 \
 --w_group_size -1 \
 --a_group_size -1 \
---local_dir "/home/jiaqichen/data2/paretoq" \
+--w_quant_type HadamardGaussianTrustQuantizer \
+--a_quant_type HadamardGaussianTrustQuantizer \
+--local_dir "/home/jiaqichen/ssd/paretoq" \
 --input_model_filename "meta-llama/Llama-3.2-1B" \
 --output_model_filename "1B-finetuned-4bit" \
---train_data_local_path "/data2/datasets/HuggingFaceFW_fineweb-edu/HuggingFaceFW_fineweb-edu_sample-10BT_train.jsonl" \
---eval_data_local_path "/data2/datasets/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
+--train_data_local_path "/data/14thdd/dataset/HuggingFaceFW_fineweb-edu/HuggingFaceFW_fineweb-edu_sample-10BT_train.jsonl" \
+--eval_data_local_path "/data/14thdd/dataset/wikitext/wikitext_wikitext-2-raw-v1_test.jsonl" \
 --max_train_tokens 100000000 \
 --do_train True \
 --do_eval False \
@@ -39,12 +41,12 @@ CUDA_VISIBLE_DEVICES=1,2 torchrun --nnodes=1 --nproc_per_node=2 --master_port=29
 --fp16 False \
 --bf16 True \
 --log_on_each_node False \
---logging_dir /home/jiaqichen/data2/paretoq/logging/4bit_finetune \
---output_dir /home/jiaqichen/data2/paretoq/output/4bit_finetune \
+--logging_dir /home/jiaqichen/ssd/paretoq/logging/4bit_finetune \
+--output_dir /home/jiaqichen/ssd/paretoq/output/4bit_finetune \
 --num_train_epochs 1 \
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 2 \
---gradient_accumulation_steps 4 \
+--gradient_accumulation_steps 2 \
 --save_strategy "steps" \
 --save_steps 2000 \
 --report_to "wandb" \
