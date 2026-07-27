@@ -172,7 +172,8 @@ def train():
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
         if training_args.use_my:
-            from utils.utils_myquant import replace_linear_with_myquantize
+            from utils.utils_myquant import replace_linear_with_myquantize, load_trust_scale_dict
+            trust_scale_dict = load_trust_scale_dict('./trace_estimation/meta-llama_Llama-3.2-1B_Hestia_src/hessian_traces.pkl', 'temp_scales')
             model = replace_linear_with_myquantize(
                 model,
                 w_bits=model_args.w_bits,
@@ -181,7 +182,9 @@ def train():
                 a_group_size=model_args.a_group_size,
                 w_quant_type=model_args.w_quant_type,
                 a_quant_type=model_args.a_quant_type,
-                skip_keywords=['embed', 'lm_head']
+                skip_keywords=['embed', 'lm_head'],
+                trust_style='mask',
+                trust_scale_dict=trust_scale_dict
             )
                 
         

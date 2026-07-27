@@ -37,7 +37,9 @@ class BaseQuantizer(nn.Module):
     def __init__(
         self, 
         num_bits, 
-        group_size=0, 
+        *args,
+        group_size=-1,
+        **kwargs
     ):
         super().__init__()
         self.num_bits = num_bits
@@ -160,6 +162,47 @@ class HadamardGaussianQuantizer(BaseQuantizer):
 
         return x_inv_had.reshape(origin_shape)
 
+class HadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
+    def __init__(self, *args, trust_style='mask', **kwargs):
+        super().__init__(*args, **kwargs)
+        self.trust_style = trust_style
+
+    def forward(self, x, trust_style='mask', **kwargs):
+        if self.num_bits >= 16:
+            return x
+        x, origin_shape = self.reshape_by_group_size(x)
+        x_had = self.hadamard_transform(x)
+        alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
+        rms = (x_had**2).mean(dim=-1, keepdim=True).sqrt().clamp(min=1e-5)
+        scale = alpha_star * rms
+
+        step = scale / (2**(self.num_bits - 1) - 1)
+        x_clipped = x_had.clamp(min=-scale, max=scale)
+        x_q = step * (x_clipped / step).round()
+
+
+        dist = (x_q - x_had).abs()
+        if self.trust_style == 'mask':
+            trust_threshold_scale = kwargs['trust_threshold_scale']
+            trust_threshold = trust_threshold_scale * (step / 2)
+            trust_mask = (dist <= trust_threshold).to(dtype=x.dtype)
+        elif self.trust_style == 'linear':
+            trust_mask = -(dist - step) / step
+        elif self.trust_style == 'cosine':
+            trust_mask = (torch.cos(torch.pi * (dist / step)) + 1) / 2
+        else:
+            raise ValueError(f'trust_style: {trust_style} is not valid.')
+
+        trust_mask = trust_mask.detach()
+
+        x_masked = x_had * trust_mask
+
+        x_gradflow = x_masked + (x_q - x_masked).detach()
+
+        x_inv_had = self.inverse_hadamard_transform(x_gradflow)
+
+        return x_inv_had.reshape(origin_shape)
+
 
 class AlignedHadamardGaussianQuantizer(HadamardGaussianQuantizer):
     def forward(self, x, **kwargs):
@@ -181,6 +224,10 @@ class AlignedHadamardGaussianQuantizer(HadamardGaussianQuantizer):
 
 
 class AlignedHadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
+    def __init__(self, *args, trust_style='mask', **kwargs):
+        super().__init__(*args, **kwargs)
+        self.trust_style = trust_style
+
     def forward(self, x, **kwargs):
         if self.num_bits >= 16:
             return x
@@ -194,10 +241,19 @@ class AlignedHadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
         x_clipped = x_had.clamp(min=-scale, max=scale)
         x_q = step * (x_clipped / step + 0.5).round() - step / 2
 
-        # Trust mask
-        trust_scale = kwargs['trust_scale']
-        trust_threshold = trust_scale * (step / 2)
-        trust_mask = ((x_q - x_had).abs() <= trust_threshold).to(dtype=x.dtype)
+        dist = (x_q - x_had).abs()
+        if self.trust_style == 'mask':
+            trust_threshold_scale = kwargs['trust_threshold_scale']
+            trust_threshold = trust_threshold_scale * (step / 2)
+            trust_mask = (dist <= trust_threshold).to(dtype=x.dtype)
+        elif self.trust_style == 'linear':
+            trust_mask = -(dist - step) / step
+        elif self.trust_style == 'cosine':
+            trust_mask = (torch.cos(torch.pi * (dist / step)) + 1) / 2
+        else:
+            raise ValueError(f'trust_style: {trust_style} is not valid.')
+
+        trust_mask = trust_mask.detach()
 
         x_masked = x_had * trust_mask
 
@@ -208,6 +264,7 @@ class AlignedHadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
         return x_inv_had.reshape(origin_shape)
 
 
+
 QUANTIZER_MAP = {
     'AsymQuantizer': AsymQuantizer,
     'SymMaxQuantizer': SymMaxQuantizer,
@@ -215,6 +272,7 @@ QUANTIZER_MAP = {
     'SymMeanQuantizer': SymMeanQuantizer,
     'AlignedSymMeanQuantizer': AlignedSymMeanQuantizer,
     'HadamardGaussianQuantizer': HadamardGaussianQuantizer,
+    'HadamardGaussianTrustQuantizer': HadamardGaussianTrustQuantizer,
     'AlignedHadamardGaussianQuantizer': AlignedHadamardGaussianQuantizer,
     'AlignedHadamardGaussianTrustQuantizer': AlignedHadamardGaussianTrustQuantizer
 }
@@ -231,7 +289,8 @@ class MyQuantizeLinear(nn.Linear):
         w_quant_type='AlignedHadamardGaussianTrustQuantizer',
         a_quant_type='AlignedHadamardGaussianTrustQuantizer',
         layer_id=None,
-        trust_scale=None,
+        trust_style='mask',
+        trust_threshold_scale=None,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -241,19 +300,19 @@ class MyQuantizeLinear(nn.Linear):
 
         w_quantizer_cls = QUANTIZER_MAP[w_quant_type]
         a_quantizer_cls = QUANTIZER_MAP[a_quant_type]
-        self.w_quantizer = w_quantizer_cls(w_bits, w_group_size)
-        self.a_quantizer = a_quantizer_cls(a_bits, a_group_size)
+        self.w_quantizer = w_quantizer_cls(w_bits, w_group_size, trust_style)
+        self.a_quantizer = a_quantizer_cls(a_bits, a_group_size, trust_style)
 
         self.layer_id = layer_id
-        self.trust_scale = trust_scale
+        self.trust_threshold_scale = trust_threshold_scale
         
 
     def forward(self, x):
         w = self.weight
         a = x
 
-        w_q = self.w_quantizer(w, trust_scale=self.trust_scale)
-        a_q = self.a_quantizer(a, trust_scale=self.trust_scale)
+        w_q = self.w_quantizer(w, trust_threshold_scale=self.trust_threshold_scale)
+        a_q = self.a_quantizer(a, trust_threshold_scale=self.trust_threshold_scale)
 
         return F.linear(a_q, w_q, self.bias)
       
@@ -268,7 +327,8 @@ class MyQuantizeLinear(nn.Linear):
         w_quant_type='AlignedHadamardGaussianTrustQuantizer',
         a_quant_type='AlignedHadamardGaussianTrustQuantizer',
         layer_id=None,
-        trust_scale=None
+        trust_threshold_scale=None,
+        trust_style='mask'
     ):
         quantize_linear = cls(
             in_features=linear.in_features,
@@ -281,7 +341,8 @@ class MyQuantizeLinear(nn.Linear):
             w_quant_type=w_quant_type,
             a_quant_type=a_quant_type,
             layer_id=layer_id,
-            trust_scale=trust_scale
+            trust_threshold_scale=trust_threshold_scale,
+            trust_style=trust_style
         )
         quantize_linear.weight = linear.weight
         quantize_linear.bias = None
@@ -300,6 +361,7 @@ def replace_linear_with_myquantize(
     w_quant_type='AlignedHadamardGaussianTrustQuantizer',
     a_quant_type='AlignedHadamardGaussianTrustQuantizer',
     skip_keywords=['embed', 'lm_head'],
+    trust_style='mask',
     trust_scale_dict=None
 ):
     layer_counter = [0]
@@ -315,7 +377,7 @@ def replace_linear_with_myquantize(
                 layer_id = f"layer_{layer_counter[0]}_{full_path}"
                 layer_counter[0] += 1
 
-                trust_scale = trust_scale_dict.get(layer_id, None) if trust_scale_dict is not None else 1.0
+                trust_threshold_scale = trust_scale_dict.get(layer_id, None) if trust_scale_dict is not None else 1.0
 
                 q_layer = MyQuantizeLinear.from_linear(
                     child,
@@ -326,7 +388,8 @@ def replace_linear_with_myquantize(
                     w_quant_type=w_quant_type,
                     a_quant_type=a_quant_type,
                     layer_id=layer_id,
-                    trust_scale=trust_scale
+                    trust_threshold_scale=trust_threshold_scale,
+                    trust_style=trust_style
                 )
                 setattr(module, name, q_layer)
                 replace_count[0] += 1
