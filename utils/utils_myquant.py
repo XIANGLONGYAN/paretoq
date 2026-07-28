@@ -303,8 +303,16 @@ class MyQuantizeLinear(nn.Linear):
 
         w_quantizer_cls = QUANTIZER_MAP[w_quant_type]
         a_quantizer_cls = QUANTIZER_MAP[a_quant_type]
-        self.w_quantizer = w_quantizer_cls(w_bits, w_group_size, trust_style)
-        self.a_quantizer = a_quantizer_cls(a_bits, a_group_size, trust_style)
+        self.w_quantizer = w_quantizer_cls(
+            w_bits,
+            group_size=w_group_size,
+            trust_style=trust_style,
+        )
+        self.a_quantizer = a_quantizer_cls(
+            a_bits,
+            group_size=a_group_size,
+            trust_style=trust_style,
+        )
 
         self.layer_id = layer_id
         self.trust_threshold_scale = trust_threshold_scale
