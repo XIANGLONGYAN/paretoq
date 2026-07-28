@@ -216,7 +216,45 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to use my quantization"}
     )
-'''  
+    log_weight_distribution: Optional[bool] = field(
+        default=True,
+        metadata={
+            "help": (
+                "Log HadamardGaussianTrustQuantizer weight-transition "
+                "diagnostics during use_my QAT."
+            )
+        },
+    )
+    distribution_output_dir: Optional[str] = field(
+        default="./distribution",
+        metadata={"help": "Directory for weight-transition diagnostic text files."},
+    )
+    distribution_log_interval: Optional[int] = field(
+        default=500,
+        metadata={"help": "Optimizer-step interval between diagnostic snapshots."},
+    )
+    distribution_boundary_epsilon: Optional[float] = field(
+        default=0.05,
+        metadata={
+            "help": "Half-width of the near-boundary band, measured in quantization steps."
+        },
+    )
+    distribution_frequent_flip_threshold: Optional[int] = field(
+        default=5,
+        metadata={
+            "help": (
+                "Minimum flips within one logging window for an element "
+                "to be considered frequently flipping."
+            )
+        },
+    )
+    distribution_sample_size: Optional[int] = field(
+        default=65536,
+        metadata={
+            "help": "Maximum deterministic weight sample tracked per quantized layer."
+        },
+    )
+'''
     use_lsq_weight: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to use LSQ for weight quantization during QAT."}

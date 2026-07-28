@@ -285,6 +285,29 @@ def train():
         data_collator=default_data_collator,
     )
 
+    # Register weight-transition diagnostics for the use_my weight quantizer.
+    if training_args.use_my and training_args.log_weight_distribution:
+        from utils.utils_distribution import HadamardWeightDistributionCallback
+
+        distribution_callback = HadamardWeightDistributionCallback(
+            model=trainer.model,
+            output_dir=training_args.distribution_output_dir,
+            interval=training_args.distribution_log_interval,
+            boundary_epsilon=training_args.distribution_boundary_epsilon,
+            frequent_flip_threshold=(
+                training_args.distribution_frequent_flip_threshold
+            ),
+            sample_size=training_args.distribution_sample_size,
+            seed=training_args.seed,
+        )
+        trainer.add_callback(distribution_callback)
+        if distribution_callback.enabled:
+            log.info(
+                "Weight-transition diagnostics registered for "
+                f"{distribution_callback.num_layers} layers "
+                f"(every {training_args.distribution_log_interval} steps)."
+            )
+
     # Register Hestia step callback if using Hestia
     if training_args.use_hestia:
         from utils.utils_hestia import HestiaStepCallback

@@ -166,10 +166,18 @@ class HadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
     def __init__(self, *args, trust_style='mask', **kwargs):
         super().__init__(*args, **kwargs)
         self.trust_style = trust_style
+        self._distribution_tracker = None
 
-    def forward(self, x, **kwargs):
-        if self.num_bits >= 16:
-            return x
+    def set_distribution_tracker(self, tracker):
+        """Attach a weight-only diagnostic tracker.
+
+        The activation quantizer never receives a tracker. Keeping the hook on
+        this concrete quantizer avoids changing the behaviour or interface of
+        the other quantizer implementations.
+        """
+        self._distribution_tracker = tracker
+
+    def _quantization_state(self, x):
         x, origin_shape = self.reshape_by_group_size(x)
         x_had = self.hadamard_transform(x)
         alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
@@ -178,7 +186,35 @@ class HadamardGaussianTrustQuantizer(HadamardGaussianQuantizer):
 
         step = scale / (2**(self.num_bits - 1) - 1)
         x_clipped = x_had.clamp(min=-scale, max=scale)
-        x_q = step * (x_clipped / step).round()
+        q_index = (x_clipped / step).round()
+        return x, origin_shape, x_had, scale, step, q_index
+
+    @torch.no_grad()
+    def capture_distribution_snapshot(self, x):
+        """Capture post-update statistics for the attached weight tracker."""
+        if self._distribution_tracker is None or self.num_bits >= 16:
+            return None
+
+        x, origin_shape, x_had, scale, step, q_index = self._quantization_state(x)
+        return self._distribution_tracker.build_snapshot(
+            raw_weight=x,
+            origin_shape=origin_shape,
+            transformed_weight=x_had,
+            scale=scale,
+            step=step,
+            q_index=q_index,
+            num_bits=self.num_bits,
+            group_size=self.group_size,
+        )
+
+    def forward(self, x, **kwargs):
+        if self.num_bits >= 16:
+            return x
+        x, origin_shape, x_had, scale, step, q_index = self._quantization_state(x)
+        x_q = step * q_index
+
+        if self.training and self._distribution_tracker is not None:
+            self._distribution_tracker.observe(q_index)
 
         half_step = step / 2
 

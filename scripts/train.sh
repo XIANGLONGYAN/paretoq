@@ -1,5 +1,11 @@
 CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port=29518 train.py \
 --use_my True \
+--log_weight_distribution True \
+--distribution_output_dir "./distribution" \
+--distribution_log_interval 500 \
+--distribution_boundary_epsilon 0.05 \
+--distribution_frequent_flip_threshold 5 \
+--distribution_sample_size 65536 \
 --use_stableqat False \
 --use_robusttraining False \
 --use_quest False \
