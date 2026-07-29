@@ -17,6 +17,14 @@ log = utils.get_logger("clm")
 
 
 class MuonTrainer(Trainer):
+    def get_decay_parameter_names(self, model):
+        decay_parameters = super().get_decay_parameter_names(model)
+        return [
+            name
+            for name in decay_parameters
+            if ".butterfly.theta" not in name
+        ]
+
     def create_optimizer(self):
         if self.optimizer is not None:
             return self.optimizer
@@ -28,24 +36,41 @@ class MuonTrainer(Trainer):
 
         # Muon only applies to hidden 2D matrices (>= 2D, not embed, not lm_head, not weight_clip_val)
         muon_params = [
-            p for n, p in self.model.named_parameters() 
-            if p.requires_grad and p.ndim >= 2 and "embed" not in n and "lm_head" not in n 
+            p
+            for n, p in self.model.named_parameters()
+            if (
+                p.requires_grad
+                and p.ndim >= 2
+                and "embed" not in n
+                and "lm_head" not in n
+                and ".butterfly.theta" not in n
+            )
             # and "clip_val" not in n
             # and "clip_l" not in n and "clip_u" not in n and "dsq_alpha" not in n
         ]
         adamw_params = [
-            p for n, p in self.model.named_parameters() 
-            if p.requires_grad and p.ndim < 2
+            p
+            for n, p in self.model.named_parameters()
+            if p.requires_grad
+            and p.ndim < 2
+            and ".butterfly.theta" not in n
             # or "clip_val" in n
             # or "clip_l" in n or "clip_u" in n or "dsq_alpha" in n
+        ]
+        butterfly_params = [
+            p for n, p in self.model.named_parameters()
+            if p.requires_grad and ".butterfly.theta" in n
         ]
 
         # Resolve learning rates
         muon_lr = self.args.learning_rate
         adamw_lr = self.args.adamw_learning_rate
-        if len(adamw_params) > 0 and adamw_lr is None:
+        if (
+            len(adamw_params) > 0 or len(butterfly_params) > 0
+        ) and adamw_lr is None:
             raise ValueError(
-                "adamw_learning_rate must be explicitly specified when there are parameters to be optimized by AdamW "
+                "adamw_learning_rate must be explicitly specified when "
+                "there are parameters to be optimized by AdamW."
             )
 
         param_groups = [
@@ -65,6 +90,16 @@ class MuonTrainer(Trainer):
                 "betas": (0.9, 0.95),
                 "eps": 1e-8,
                 "weight_decay": self.args.weight_decay,
+                "use_muon": False,
+            })
+
+        if len(butterfly_params) > 0:
+            param_groups.append({
+                "params": butterfly_params,
+                "lr": adamw_lr,
+                "betas": (0.9, 0.95),
+                "eps": 1e-8,
+                "weight_decay": 0.0,
                 "use_muon": False,
             })
 
@@ -171,6 +206,22 @@ def train():
         )
 
     if training_args.qat and (model_args.w_bits < 16 or model_args.a_bits < 16):
+        enabled_quantization_methods = [
+            method_name
+            for method_name, enabled in (
+                ("my", training_args.use_my),
+                ("butterfly", training_args.use_butterfly),
+                ("hestia", training_args.use_hestia),
+                ("quest", training_args.use_quest),
+            )
+            if enabled
+        ]
+        if len(enabled_quantization_methods) != 1:
+            raise ValueError(
+                "Exactly one QAT quantization method must be enabled; got "
+                f"{enabled_quantization_methods or 'none'}."
+            )
+
         if training_args.use_my:
             from utils.utils_myquant import replace_linear_with_myquantize, load_trust_scale_dict
             trust_scale_dict = load_trust_scale_dict('./trace_estimation/meta-llama_Llama-3.2-1B_Hestia_src/hessian_traces.pkl', 'temp_scales')
@@ -186,8 +237,23 @@ def train():
                 trust_style='mask',
                 trust_scale_dict=trust_scale_dict
             )
-                
-        
+
+        elif training_args.use_butterfly:
+            from utils.utils_butterfly import replace_linear_with_butterfly
+
+            model = replace_linear_with_butterfly(
+                model,
+                w_bits=model_args.w_bits,
+                a_bits=model_args.a_bits,
+                w_group_size=model_args.w_group_size,
+                a_group_size=model_args.a_group_size,
+                butterfly_init=training_args.butterfly_init,
+                hadamard_block_size=(
+                    training_args.butterfly_hadamard_block_size
+                ),
+                skip_keywords=skip_keywords,
+            )
+
         elif training_args.use_hestia:
             # --- Hestia path ---
             import utils.utils_hestia as hestia_mod

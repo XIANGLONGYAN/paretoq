@@ -156,6 +156,20 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "Whether to use QuEST (Hadamard + Trust Gradient) quantization during QAT."}
     )
+    use_butterfly: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to use learnable ButterflyQuant transforms during QAT."}
+    )
+    butterfly_init: Optional[str] = field(
+        default="identity",
+        metadata={"help": "Butterfly initialization: identity or hadamard."}
+    )
+    butterfly_hadamard_block_size: Optional[int] = field(
+        default=128,
+        metadata={
+            "help": "Hadamard block size used only when butterfly_init=hadamard."
+        }
+    )
     quest_hadamard_block_size: Optional[int] = field(
         default=128,
         metadata={"help": "Block size for QuEST Hadamard transform (must be power of 2)."}
