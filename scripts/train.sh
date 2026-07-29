@@ -3,6 +3,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --nnodes=1 --nproc_per_node=4 --master_por
 --use_butterfly True \
 --butterfly_init identity \
 --butterfly_hadamard_block_size 128 \
+--butterfly_clip_method gaussian \
 --butterfly_learning_rate 1e-5 \
 --butterfly_optimizer sgd \
 --use_stableqat False \

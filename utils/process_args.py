@@ -170,6 +170,12 @@ class TrainingArguments(transformers.TrainingArguments):
             "help": "Hadamard block size used only when butterfly_init=hadamard."
         }
     )
+    butterfly_clip_method: Optional[str] = field(
+        default="absmax",
+        metadata={
+            "help": "Butterfly quantizer clipping method: absmax or gaussian."
+        }
+    )
     butterfly_learning_rate: Optional[float] = field(
         default=None,
         metadata={"help": "Learning rate used only for Butterfly theta parameters."}

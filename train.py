@@ -423,6 +423,7 @@ def train():
                 a_bits=model_args.a_bits,
                 w_group_size=model_args.w_group_size,
                 a_group_size=model_args.a_group_size,
+                clip_method=training_args.butterfly_clip_method,
                 butterfly_init=training_args.butterfly_init,
                 hadamard_block_size=(
                     training_args.butterfly_hadamard_block_size

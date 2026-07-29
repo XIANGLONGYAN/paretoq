@@ -6,6 +6,17 @@ from torch import nn
 import torch.nn.functional as F
 
 
+OPTIMAL_GAUSSIAN_SCALES = {
+    2: 1.4935346200015913,
+    3: 2.051068354131873,
+    4: 2.513930578568423,
+    5: 2.9160938834961225,
+    6: 3.276597282593217,
+    7: 3.6010497188221655,
+    8: 3.884938678807525,
+}
+
+
 def _is_power_of_two(value: int) -> bool:
     return value > 0 and (value & (value - 1)) == 0
 
@@ -216,9 +227,11 @@ class ButterflyQuantizer(nn.Module):
     """
     Symmetric uniform fake quantizer used by ButterflyQuant.
 
-    Quantization is performed per last-dimension group using a max-absolute
-    scale. The forward pass uses hard round/clip/dequantize operations, while
-    the backward pass uses the straight-through estimator (STE).
+    Quantization is performed per last-dimension group. ``absmax`` follows the
+    ButterflyQuant paper and covers the complete group range. ``gaussian``
+    instead clips at ``alpha_star * RMS``, using the MSE-optimal Gaussian
+    constants from MyQuant. The backward pass uses the straight-through
+    estimator (STE).
 
     ``group_size`` follows the conventions in ``utils_myquant.py``:
 
@@ -231,11 +244,14 @@ class ButterflyQuantizer(nn.Module):
     both operands before invoking the quantizers.
     """
 
+    SUPPORTED_CLIP_METHODS = ("absmax", "gaussian")
+
     def __init__(
         self,
         num_bits: int,
         *,
         group_size: int = -1,
+        clip_method: str = "absmax",
         eps: float = 1e-5,
     ) -> None:
         super().__init__()
@@ -251,17 +267,32 @@ class ButterflyQuantizer(nn.Module):
             raise ValueError(
                 f"group_size must be -1, 0, or a positive integer, got {group_size}."
             )
+        if clip_method not in self.SUPPORTED_CLIP_METHODS:
+            raise ValueError(
+                f"Unsupported clip_method {clip_method!r}; "
+                f"expected one of {self.SUPPORTED_CLIP_METHODS}."
+            )
+        if (
+            clip_method == "gaussian"
+            and num_bits < 16
+            and num_bits not in OPTIMAL_GAUSSIAN_SCALES
+        ):
+            raise ValueError(
+                "Gaussian clipping supports quantized bit-widths 2 through 8, "
+                f"got {num_bits}."
+            )
         if eps <= 0:
             raise ValueError(f"eps must be positive, got {eps}.")
 
         self.num_bits = num_bits
         self.group_size = group_size
+        self.clip_method = clip_method
         self.eps = eps
 
     def extra_repr(self) -> str:
         return (
             f"num_bits={self.num_bits}, group_size={self.group_size}, "
-            f"eps={self.eps}"
+            f"clip_method={self.clip_method!r}, eps={self.eps}"
         )
 
     def _reshape_groups(self, x: torch.Tensor):
@@ -290,16 +321,23 @@ class ButterflyQuantizer(nn.Module):
             )
 
         grouped, original_shape = self._reshape_groups(x)
-        quant_min = -(2 ** (self.num_bits - 1))
         quant_max = 2 ** (self.num_bits - 1) - 1
+        quant_min = -quant_max
 
-        abs_max = grouped.abs().amax(dim=-1, keepdim=True)
-        scale = (abs_max / quant_max).clamp(min=self.eps)
-        quantized = torch.round(grouped / scale).clamp(
+        if self.clip_method == "absmax":
+            clip_max = grouped.abs().amax(dim=-1, keepdim=True)
+        else:
+            alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
+            rms = grouped.square().mean(dim=-1, keepdim=True).sqrt()
+            clip_max = alpha_star * rms
+
+        step = (clip_max / quant_max).clamp(min=self.eps)
+        clipped = grouped.clamp(min=-clip_max, max=clip_max)
+        quantized = torch.round(clipped / step).clamp(
             min=quant_min,
             max=quant_max,
         )
-        dequantized = quantized * scale
+        dequantized = quantized * step
 
         # Hard fake quantization in forward, identity surrogate in backward.
         fake_quantized = grouped + (dequantized - grouped).detach()
@@ -327,6 +365,7 @@ class ButterflyQuantizeLinear(nn.Linear):
         a_bits: int = 16,
         w_group_size: int = -1,
         a_group_size: int = -1,
+        clip_method: str = "absmax",
         butterfly_init: str = "identity",
         hadamard_block_size: int = 128,
         butterfly_parameter_dtype: torch.dtype = torch.float32,
@@ -339,6 +378,7 @@ class ButterflyQuantizeLinear(nn.Linear):
         self.a_bits = a_bits
         self.w_group_size = w_group_size
         self.a_group_size = a_group_size
+        self.clip_method = clip_method
         self.butterfly_init = butterfly_init
         self.hadamard_block_size = hadamard_block_size
         self.layer_id = layer_id
@@ -353,10 +393,12 @@ class ButterflyQuantizeLinear(nn.Linear):
         self.w_quantizer = ButterflyQuantizer(
             w_bits,
             group_size=w_group_size,
+            clip_method=clip_method,
         )
         self.a_quantizer = ButterflyQuantizer(
             a_bits,
             group_size=a_group_size,
+            clip_method=clip_method,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -376,6 +418,7 @@ class ButterflyQuantizeLinear(nn.Linear):
         a_bits: int = 16,
         w_group_size: int = -1,
         a_group_size: int = -1,
+        clip_method: str = "absmax",
         butterfly_init: str = "identity",
         hadamard_block_size: int = 128,
         butterfly_parameter_dtype: torch.dtype = torch.float32,
@@ -389,6 +432,7 @@ class ButterflyQuantizeLinear(nn.Linear):
             a_bits=a_bits,
             w_group_size=w_group_size,
             a_group_size=a_group_size,
+            clip_method=clip_method,
             butterfly_init=butterfly_init,
             hadamard_block_size=hadamard_block_size,
             butterfly_parameter_dtype=butterfly_parameter_dtype,
@@ -410,6 +454,7 @@ def replace_linear_with_butterfly(
     a_bits: int = 16,
     w_group_size: int = -1,
     a_group_size: int = -1,
+    clip_method: str = "absmax",
     butterfly_init: str = "identity",
     hadamard_block_size: int = 128,
     butterfly_parameter_dtype: torch.dtype = torch.float32,
@@ -444,6 +489,7 @@ def replace_linear_with_butterfly(
                     a_bits=a_bits,
                     w_group_size=w_group_size,
                     a_group_size=a_group_size,
+                    clip_method=clip_method,
                     butterfly_init=butterfly_init,
                     hadamard_block_size=hadamard_block_size,
                     butterfly_parameter_dtype=butterfly_parameter_dtype,
