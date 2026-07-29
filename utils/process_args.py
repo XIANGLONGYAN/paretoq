@@ -170,6 +170,14 @@ class TrainingArguments(transformers.TrainingArguments):
             "help": "Hadamard block size used only when butterfly_init=hadamard."
         }
     )
+    butterfly_learning_rate: Optional[float] = field(
+        default=None,
+        metadata={"help": "Learning rate used only for Butterfly theta parameters."}
+    )
+    butterfly_optimizer: Optional[str] = field(
+        default="sgd",
+        metadata={"help": "Optimizer for Butterfly theta parameters: adamw or sgd."}
+    )
     quest_hadamard_block_size: Optional[int] = field(
         default=128,
         metadata={"help": "Block size for QuEST Hadamard transform (must be power of 2)."}

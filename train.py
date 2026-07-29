@@ -16,6 +16,85 @@ from utils.eval import run_evaluation
 log = utils.get_logger("clm")
 
 
+class CompositeOptimizer(torch.optim.Optimizer):
+    """
+    Expose multiple concrete optimizers as one optimizer to Trainer.
+
+    Parameter-group dictionaries are shared with the child optimizers, so the
+    Trainer scheduler updates each child's learning rate.
+    """
+
+    def __init__(self, optimizers):
+        if not optimizers:
+            raise ValueError("CompositeOptimizer requires at least one optimizer.")
+
+        self.optimizers = list(optimizers)
+        all_parameters = [
+            parameter
+            for optimizer in self.optimizers
+            for group in optimizer.param_groups
+            for parameter in group["params"]
+        ]
+        super().__init__(all_parameters, defaults={})
+
+        self._refresh_param_groups()
+        self._refresh_state_view()
+
+    def _refresh_param_groups(self):
+        self.param_groups = [
+            group
+            for optimizer in self.optimizers
+            for group in optimizer.param_groups
+        ]
+
+    def _refresh_state_view(self):
+        self.state = {
+            parameter: parameter_state
+            for optimizer in self.optimizers
+            for parameter, parameter_state in optimizer.state.items()
+        }
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for optimizer in self.optimizers:
+            optimizer.step()
+        self._refresh_state_view()
+        return loss
+
+    def zero_grad(self, set_to_none=True):
+        for optimizer in self.optimizers:
+            optimizer.zero_grad(set_to_none=set_to_none)
+
+    def state_dict(self):
+        return {
+            "sub_optimizer_state_dicts": [
+                optimizer.state_dict() for optimizer in self.optimizers
+            ]
+        }
+
+    def load_state_dict(self, state_dict):
+        sub_optimizer_states = state_dict["sub_optimizer_state_dicts"]
+        if len(sub_optimizer_states) != len(self.optimizers):
+            raise ValueError(
+                "Optimizer checkpoint contains "
+                f"{len(sub_optimizer_states)} sub-optimizers, but the current "
+                f"configuration has {len(self.optimizers)}."
+            )
+
+        for optimizer, optimizer_state in zip(
+            self.optimizers,
+            sub_optimizer_states,
+        ):
+            optimizer.load_state_dict(optimizer_state)
+        self._refresh_param_groups()
+        self._refresh_state_view()
+
+
 class MuonTrainer(Trainer):
     def get_decay_parameter_names(self, model):
         decay_parameters = super().get_decay_parameter_names(model)
@@ -25,12 +104,109 @@ class MuonTrainer(Trainer):
             if ".butterfly.theta" not in name
         ]
 
+    def _create_non_muon_optimizer(self):
+        butterfly_named_parameters = [
+            (name, parameter)
+            for name, parameter in self.model.named_parameters()
+            if parameter.requires_grad and ".butterfly.theta" in name
+        ]
+        if not butterfly_named_parameters:
+            return super().create_optimizer()
+
+        butterfly_learning_rate = self.args.butterfly_learning_rate
+        if butterfly_learning_rate is None or butterfly_learning_rate <= 0:
+            raise ValueError(
+                "butterfly_learning_rate must be a positive value when "
+                "Butterfly theta parameters are present."
+            )
+
+        butterfly_optimizer_value = self.args.butterfly_optimizer
+        if not isinstance(butterfly_optimizer_value, str):
+            raise ValueError(
+                "butterfly_optimizer must be either 'adamw' or 'sgd', got "
+                f"{butterfly_optimizer_value!r}."
+            )
+        butterfly_optimizer_type = butterfly_optimizer_value.lower()
+        if butterfly_optimizer_type not in {"adamw", "sgd"}:
+            raise ValueError(
+                "butterfly_optimizer must be either 'adamw' or 'sgd', got "
+                f"{self.args.butterfly_optimizer!r}."
+            )
+
+        butterfly_parameter_ids = {
+            id(parameter) for _, parameter in butterfly_named_parameters
+        }
+        model_named_parameters = [
+            (name, parameter)
+            for name, parameter in self.model.named_parameters()
+            if parameter.requires_grad
+            and id(parameter) not in butterfly_parameter_ids
+        ]
+        decay_parameter_names = set(
+            super().get_decay_parameter_names(self.model)
+        )
+        model_parameter_groups = [
+            {
+                "params": [
+                    parameter
+                    for name, parameter in model_named_parameters
+                    if name in decay_parameter_names
+                ],
+                "weight_decay": self.args.weight_decay,
+            },
+            {
+                "params": [
+                    parameter
+                    for name, parameter in model_named_parameters
+                    if name not in decay_parameter_names
+                ],
+                "weight_decay": 0.0,
+            },
+        ]
+        model_parameter_groups = [
+            group for group in model_parameter_groups if group["params"]
+        ]
+
+        optimizers = []
+        if model_parameter_groups:
+            optimizers.append(
+                torch.optim.AdamW(
+                    model_parameter_groups,
+                    lr=self.args.learning_rate,
+                    betas=(self.args.adam_beta1, self.args.adam_beta2),
+                    eps=self.args.adam_epsilon,
+                )
+            )
+
+        butterfly_parameters = [
+            parameter for _, parameter in butterfly_named_parameters
+        ]
+        if butterfly_optimizer_type == "adamw":
+            butterfly_optimizer = torch.optim.AdamW(
+                butterfly_parameters,
+                lr=butterfly_learning_rate,
+                betas=(self.args.adam_beta1, self.args.adam_beta2),
+                eps=self.args.adam_epsilon,
+                weight_decay=0.0,
+            )
+        else:
+            butterfly_optimizer = torch.optim.SGD(
+                butterfly_parameters,
+                lr=butterfly_learning_rate,
+                momentum=0.0,
+                weight_decay=0.0,
+            )
+
+        optimizers.append(butterfly_optimizer)
+        self.optimizer = CompositeOptimizer(optimizers)
+        return self.optimizer
+
     def create_optimizer(self):
         if self.optimizer is not None:
             return self.optimizer
 
         if not self.args.use_muon:
-            return super().create_optimizer()
+            return self._create_non_muon_optimizer()
 
         from optimizer.muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
 
