@@ -49,7 +49,7 @@ class ButterflyTransform(nn.Module):
         *,
         init: str = "identity",
         hadamard_block_size: int = 128,
-        parameter_dtype: torch.dtype = torch.float32,
+        parameter_dtype: torch.dtype,
         device: Optional[torch.device] = None,
     ) -> None:
         super().__init__()
@@ -129,8 +129,8 @@ class ButterflyTransform(nn.Module):
         num_groups = self.feature_dim // (2 * stride)
         theta = self.theta[stage].reshape(num_groups, stride)
 
-        # Trigonometric functions are evaluated in the parameter dtype
-        # (FP32 by default), then cast for the tensor arithmetic.
+        # Evaluate trigonometric functions in theta's dtype. The final cast is
+        # normally a no-op because theta follows the owning Linear's dtype.
         cos_theta = torch.cos(theta).to(device=device, dtype=dtype)
         sin_theta = torch.sin(theta).to(device=device, dtype=dtype)
         return stride, num_groups, cos_theta, sin_theta
@@ -381,7 +381,6 @@ class ButterflyQuantizeLinear(nn.Linear):
         clip_method: str = "absmax",
         butterfly_init: str = "identity",
         hadamard_block_size: int = 128,
-        butterfly_parameter_dtype: torch.dtype = torch.float32,
         layer_id: Optional[str] = None,
         **kwargs,
     ) -> None:
@@ -400,7 +399,7 @@ class ButterflyQuantizeLinear(nn.Linear):
             self.in_features,
             init=butterfly_init,
             hadamard_block_size=hadamard_block_size,
-            parameter_dtype=butterfly_parameter_dtype,
+            parameter_dtype=self.weight.dtype,
             device=self.weight.device,
         )
         self.w_quantizer = ButterflyQuantizer(
@@ -423,14 +422,10 @@ class ButterflyQuantizeLinear(nn.Linear):
         return F.linear(quantized_activation, quantized_weight, self.bias)
 
     def compute_clipping_loss(self) -> torch.Tensor:
-        """Compute an FP32 clipping loss whose gradient updates only theta."""
-        with torch.autocast(
-            device_type=self.weight.device.type,
-            enabled=False,
-        ):
-            detached_weight = self.weight.detach().float()
-            rotated_weight = self.butterfly(detached_weight)
-            return self.w_quantizer.compute_clipping_loss(rotated_weight)
+        """Compute a model-dtype clipping loss that updates only theta."""
+        detached_weight = self.weight.detach()
+        rotated_weight = self.butterfly(detached_weight)
+        return self.w_quantizer.compute_clipping_loss(rotated_weight)
 
     @classmethod
     def from_linear(
@@ -444,7 +439,6 @@ class ButterflyQuantizeLinear(nn.Linear):
         clip_method: str = "absmax",
         butterfly_init: str = "identity",
         hadamard_block_size: int = 128,
-        butterfly_parameter_dtype: torch.dtype = torch.float32,
         layer_id: Optional[str] = None,
     ):
         quantized_linear = cls(
@@ -458,7 +452,6 @@ class ButterflyQuantizeLinear(nn.Linear):
             clip_method=clip_method,
             butterfly_init=butterfly_init,
             hadamard_block_size=hadamard_block_size,
-            butterfly_parameter_dtype=butterfly_parameter_dtype,
             layer_id=layer_id,
             device=linear.weight.device,
             dtype=linear.weight.dtype,
@@ -480,7 +473,6 @@ def replace_linear_with_butterfly(
     clip_method: str = "absmax",
     butterfly_init: str = "identity",
     hadamard_block_size: int = 128,
-    butterfly_parameter_dtype: torch.dtype = torch.float32,
     skip_keywords: Optional[Sequence[str]] = ("embed", "lm_head"),
 ) -> nn.Module:
     """Recursively replace eligible nn.Linear modules in-place."""
@@ -515,7 +507,6 @@ def replace_linear_with_butterfly(
                     clip_method=clip_method,
                     butterfly_init=butterfly_init,
                     hadamard_block_size=hadamard_block_size,
-                    butterfly_parameter_dtype=butterfly_parameter_dtype,
                     layer_id=layer_id,
                 )
                 setattr(module, name, replacement)
