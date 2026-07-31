@@ -176,6 +176,12 @@ class TrainingArguments(transformers.TrainingArguments):
             "help": "Butterfly quantizer clipping method: absmax or gaussian."
         }
     )
+    butterfly_clipping_loss_weight: Optional[float] = field(
+        default=0.0,
+        metadata={
+            "help": "Weight of Butterfly Gaussian clipping loss; 0 disables it."
+        }
+    )
     butterfly_learning_rate: Optional[float] = field(
         default=None,
         metadata={"help": "Learning rate used only for Butterfly theta parameters."}

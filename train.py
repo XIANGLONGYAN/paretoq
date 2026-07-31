@@ -104,6 +104,51 @@ class MuonTrainer(Trainer):
             if ".butterfly.theta" not in name
         ]
 
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        loss, outputs = super().compute_loss(
+            model,
+            inputs,
+            return_outputs=True,
+            **kwargs,
+        )
+
+        clipping_loss_weight = self.args.butterfly_clipping_loss_weight
+        if model.training and clipping_loss_weight > 0:
+            from utils.utils_butterfly import ButterflyQuantizeLinear
+
+            per_layer_clipping_losses = [
+                module.compute_clipping_loss()
+                for module in model.modules()
+                if isinstance(module, ButterflyQuantizeLinear)
+            ]
+            clipping_loss = torch.stack(
+                per_layer_clipping_losses,
+                dim=0,
+            ).mean()
+            weighted_clipping_loss = clipping_loss_weight * clipping_loss
+            loss = loss + weighted_clipping_loss
+
+            self._last_butterfly_clipping_loss = clipping_loss.detach()
+            self._last_weighted_butterfly_clipping_loss = (
+                weighted_clipping_loss.detach()
+            )
+
+        return (loss, outputs) if return_outputs else loss
+
+    def log(self, logs, *args, **kwargs):
+        logs = dict(logs)
+        if "loss" in logs and hasattr(
+            self,
+            "_last_butterfly_clipping_loss",
+        ):
+            logs["butterfly_clipping_loss"] = (
+                self._last_butterfly_clipping_loss.item()
+            )
+            logs["weighted_butterfly_clipping_loss"] = (
+                self._last_weighted_butterfly_clipping_loss.item()
+            )
+        return super().log(logs, *args, **kwargs)
+
     def _create_non_muon_optimizer(self):
         butterfly_named_parameters = [
             (name, parameter)

@@ -312,6 +312,19 @@ class ButterflyQuantizer(nn.Module):
 
         return grouped, original_shape
 
+    def compute_clipping_loss(self, x: torch.Tensor) -> torch.Tensor:
+        """Return the normalized Gaussian tail penalty for ``x``."""
+        if self.num_bits >= 16:
+            return x.sum() * 0.0
+
+        grouped, _ = self._reshape_groups(x)
+        alpha_star = OPTIMAL_GAUSSIAN_SCALES[self.num_bits]
+        rms = grouped.square().mean(dim=-1, keepdim=True).sqrt()
+        rms = rms.clamp(min=self.eps)
+        normalized_magnitude = grouped.abs() / rms
+        clipping_excess = F.relu(normalized_magnitude - alpha_star)
+        return clipping_excess.square().mean()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.num_bits >= 16:
             return x
@@ -408,6 +421,16 @@ class ButterflyQuantizeLinear(nn.Linear):
         quantized_activation = self.a_quantizer(rotated_activation)
         quantized_weight = self.w_quantizer(rotated_weight)
         return F.linear(quantized_activation, quantized_weight, self.bias)
+
+    def compute_clipping_loss(self) -> torch.Tensor:
+        """Compute an FP32 clipping loss whose gradient updates only theta."""
+        with torch.autocast(
+            device_type=self.weight.device.type,
+            enabled=False,
+        ):
+            detached_weight = self.weight.detach().float()
+            rotated_weight = self.butterfly(detached_weight)
+            return self.w_quantizer.compute_clipping_loss(rotated_weight)
 
     @classmethod
     def from_linear(
