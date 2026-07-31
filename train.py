@@ -361,6 +361,22 @@ class MuonTrainer(Trainer):
 def train():
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args, eval_args = process_args()
+
+    if (
+        training_args.gradient_checkpointing
+        and training_args.use_butterfly
+        and training_args.butterfly_clipping_loss_weight > 0
+    ):
+        gradient_checkpointing_kwargs = dict(
+            training_args.gradient_checkpointing_kwargs or {}
+        )
+        # The clipping loss uses theta outside the checkpointed model forward.
+        # Reentrant checkpointing would therefore trigger theta's DDP reducer
+        # hook once in the outer backward and again in the nested backward.
+        gradient_checkpointing_kwargs["use_reentrant"] = False
+        training_args.gradient_checkpointing_kwargs = (
+            gradient_checkpointing_kwargs
+        )
     
     transformers.set_seed(training_args.seed)
     torch.cuda.manual_seed_all(training_args.seed)
